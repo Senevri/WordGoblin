@@ -18,7 +18,8 @@ class WordGoblin():
         lines = []
         for key in whitespace:
             text = text.replace(key, " ")
-        words = (text.split(" "))
+        #words = (text.split(" "))
+        words = [w for w in text.split(" ") if w]
         return words
 
 
@@ -92,6 +93,8 @@ class WordGoblin():
         return combined_distances
 
     def get_nearby_words(self, word):
+        if word not in self.word_distances:
+            self.word_distances[word] = {}
         distances = self.word_distances[word]
         return [
             (other_word, distance, weight)
@@ -108,6 +111,18 @@ class WordGoblin():
             for (other_word, distance), weight in distances.items()
             if distance == 1
         ])
+
+    def get_buffer_words(self, buffer):
+        for word in buffer:
+            nearby = [x for x in self.get_nearby_words(word) if x[0].strip()]
+            for other_word, distance, weight in nearby:
+                if other_word in buffer:
+                    nearby = self.get_nearby_words(other_word)
+                    yield random.choice(nearby)[0]
+                else:
+                    yield other_word
+
+
 
     # def generate_random_sentence(self, starting_word="the"):
     #     nearby_words = self.get_nearby_words(starting_word)
@@ -159,6 +174,14 @@ class WordGoblin():
             words, weights = candidates
             word = random.choices(words, weights=weights, k=1)[0]
             sentence.append(word)
+            # if word.endswith(",") or word == ",":
+            #     break
+
+            if word.endswith(".") or word == ".":
+                break
+        while not (word.endswith(".") or word == "."):
+            word = self.get_next_word(word)
+            sentence.append(word)
 
         return " ".join(sentence)
 
@@ -169,7 +192,7 @@ class WordGoblin():
             candidates = [
                 (other_word, weight)
                 for (other_word, distance), weight in associations.items()
-                if distance < 2
+                if distance < 1
             ]
 
             if candidates:
@@ -315,10 +338,10 @@ def test_three():
     wg.word_distances = dict(sorted(wg.word_distances.items()))
     start = timer()
     print ("Unique words after", len(wg.unique_words))
-    for i in range(3):
+    for i in range(10):
         word = random.choice(wg.unique_words)
         print (f"Word: {word}:")
-        for j in range(10):
+        for j in range(3):
             print(f"\t{wg.generate_random_sentence(word, length=32)}")
     end = timer()
     print(f"Time taken: {end - start}")
@@ -348,27 +371,35 @@ if __name__ == "__main__":
     args = parser.parse_args()
     # Load text file
 
-    # path = pathlib.Path(args.text_file)
-    # if path.is_dir():
-    #     for file in path.iterdir():
-    #         if file.suffix in [".txt", ".md"]:
-    #             args.text_file = file
-    #             picklefile = pathlib.Path(args.text_file).with_suffix(".pickle")
-    #             if picklefile.is_file():
-    #                 # text = ""
-    #                 # wg = WordGoblin("")
-    #                 # wg.load(picklefile)
-    #                 # wg.build_sampling_cache()
-    #                 pass
-    #             else:
-    #                 with open(args.text_file) as f:
-    #                     text = f.read()
-    #                 wg = WordGoblin(text)
-    #                 wg.save(picklefile)
+    path = pathlib.Path(args.text_file)
+    if path.is_dir():
+        for file in path.iterdir():
+            if file.suffix in [".txt", ".md"]:
+                args.text_file = file
+                picklefile = pathlib.Path(args.text_file).with_suffix(".pickle")
+                if picklefile.is_file():
+                    # text = ""
+                    # wg = WordGoblin("")
+                    # wg.load(picklefile)
+                    # wg.build_sampling_cache()
+                    pass
+                else:
+                    with open(args.text_file) as f:
+                        text = f.read()
+                    wg = WordGoblin(text)
+                    wg.save(picklefile)
+    # wg = test_three()
+    # test_four(wg)
 
-
-    # main(args.text_file)
-
-    test_two()
-    wg = test_three()
-    test_four(wg)
+    start = timer()
+    wg = WordGoblin("")
+    wg.load("combined.pickle")
+    wg.build_sampling_cache()
+    words = [w for w in wg.unique_words if w and (w[0].isupper() or w.startswith("..."))]
+    for i in range(30):
+        word = random.choice(words)
+        print (f"Word: {word}:")
+        for j in range(3):
+            print(f"\t{wg.generate_random_sentence(word, length=32)}")
+    stop = timer()
+    print(f"Time taken: {stop - start}")

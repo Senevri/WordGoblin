@@ -3,6 +3,7 @@ from pathlib import Path
 from wordgoblins import WordGoblin, test_two, test_three, test_four
 def build_goblin(path):
     path = Path(path)
+
     print(path)
     text = path.read_text(encoding="utf-8")
 
@@ -15,7 +16,15 @@ def build_goblin(path):
 
 def build_goblins(directory):
     paths = list(Path(directory).glob("*.txt"))
-    paths.extend(Path(directory).glob("*.md"))
+    paths.extend(list(Path(directory).glob("*.md")))
+    print(len(paths))
+    for path in paths:
+        picklepath = path.with_suffix(".pickle").resolve()
+        print(path, picklepath)
+        if picklepath.is_file():
+            paths.remove(path)
+    print(len(paths))
+    #exit(0)
 
     with ProcessPoolExecutor() as pool:
         results = pool.map(build_goblin, paths)
@@ -61,8 +70,8 @@ if __name__ == "__main__":
 
 
     goblins = build_goblins(path)
-    for goblin in goblins:
-        goblins[goblin].save(Path(goblin).with_suffix(".pickle"))
+    # for goblin in goblins:
+    #     goblins[goblin].save(Path(goblin).with_suffix(".pickle"))
 
     test_two()
     wg = test_three()
