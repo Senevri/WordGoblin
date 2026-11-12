@@ -200,7 +200,7 @@ class WordGoblin():
                 self._sampling_cache[word] = (words, weights)
 
     @property
-    def unique_words(self):
+    def unique_letters(self):
         return list(self.word_distances.keys())
 
     @property
@@ -269,7 +269,7 @@ def main(filename):
     for j in range (3):
         print("-"*80)
         for i in range (10):
-            print(wg.generate_random_sentence(random.choice(wg.unique_words)))
+            print(wg.generate_random_sentence(random.choice(wg.unique_letters)))
     end = timer()
     print(f"Time taken: {end - start}") # Time
 
@@ -298,6 +298,32 @@ def test_two():
     print(wg1.word_distances)
     print(wg1.word_distances["the"])
 
+def two_word_search():
+    wg = WordGoblin("")
+    wg.load("combined.pickle")
+    wg.build_sampling_cache()
+
+
+    for j in range(3):
+        print("-"*80)
+        sentence = []
+        _word = random.choice(wg.unique_letters)
+        for i in range(20):
+            # find second word
+            words = wg.get_nearby_words(_word)
+            if not words:
+                continue
+            word2 = random.choice(words)
+            for w in wg.word_distances[_word]:
+                print(wg.word_distances[_word][w], w)
+                if 2 == wg.word_distances[_word][w]:
+                    print(f"{_word}: {word2}: {w}")
+                    sentence.extend([_word, word2[0]])
+                    _word = w
+                    break
+
+        print(" ".join(sentence))
+
 def test_three():
     start = timer()
     goblins = []
@@ -305,11 +331,11 @@ def test_three():
         wg = WordGoblin("")
         wg.load(path)
         wg.build_sampling_cache()
-        print(path, len(wg.unique_words))
+        print(path, len(wg.unique_letters))
         goblins.append(wg)
         print("original goblin phrases")
         for i in range(3):
-            word = random.choice(wg.unique_words)
+            word = random.choice(wg.unique_letters)
             print (f"Word: {word}:")
             for j in range(10):
                 print(f"\t{wg.generate_random_sentence(word)}")
@@ -361,17 +387,7 @@ def test_four(wg:WordGoblin):
     )[:20]:
         print(len(words), repr(word))
 
-if __name__ == "__main__":
-    import sys
-    import argparse
-
-    parser = argparse.ArgumentParser(description="A word goblin")
-    parser.add_argument("text_file", help="The text file or path to read")
-
-    args = parser.parse_args()
-    # Load text file
-
-    path = pathlib.Path(args.text_file)
+def main(path):
     if path.is_dir():
         for file in path.iterdir():
             if file.suffix in [".txt", ".md"]:
@@ -395,7 +411,7 @@ if __name__ == "__main__":
     wg = WordGoblin("")
     wg.load("combined.pickle")
     wg.build_sampling_cache()
-    words = [w for w in wg.unique_words if w and (w[0].isupper() or w.startswith("..."))]
+    words = [w for w in wg.unique_letters if w and (w[0].isupper() or w.startswith("..."))]
     for i in range(30):
         word = random.choice(words)
         print (f"Word: {word}:")
@@ -403,3 +419,17 @@ if __name__ == "__main__":
             print(f"\t{wg.generate_random_sentence(word, length=32)}")
     stop = timer()
     print(f"Time taken: {stop - start}")
+
+
+if __name__ == "__main__":
+    import sys
+    import argparse
+
+    parser = argparse.ArgumentParser(description="A word goblin")
+    parser.add_argument("text_file", help="The text file or path to read")
+
+    args = parser.parse_args()
+    # Load text file
+
+    path = pathlib.Path(args.text_file)
+    two_word_search()

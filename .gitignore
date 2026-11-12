@@ -1,2 +1,3 @@
 *.pickle
 text_and_pickles/
+__pycache__/
