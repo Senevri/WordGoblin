@@ -13,14 +13,16 @@ if SCRIPT_ROOT not in sys.path:
     sys.path.insert(0, str(SCRIPT_ROOT))
 
 from wordgoblins import WordGoblin
+from tweengoblin import TweenGoblin
 
+MAX_DEPTH = 20
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 min_window = 1
 
-def n_word_search(wg, word_list: List[str]) -> List[Candidate]:
+def _n_word_search(wg, word_list: List[str]) -> List[Candidate]:
     """Predict the word(s) that follow ``word_list`` verbatim.
 
     The first word anchors the check: ``word_list[i]`` must appear at
@@ -48,6 +50,18 @@ def n_word_search(wg, word_list: List[str]) -> List[Candidate]:
     # the last word. Anchoring the return on the last word (rather than
     # extrapolating back to the anchor) keeps verbatim phrases intact even
     # when the training text is not perfectly linear.
+    last_word = word_list[-1]
+    return wg.get_nearby_words(last_word, 0)
+
+def n_word_search(wg, word_list):
+    if not word_list:
+        return []
+    # chain check: each adjacent pair must be a real transition
+    for i in range(len(word_list) - 1):
+        anchor, target = word_list[i], word_list[i + 1]
+        wd = wg.word_distances.get(anchor)
+        if not wd or (target, 0) not in wd:
+            return []
     last_word = word_list[-1]
     return wg.get_nearby_words(last_word, 0)
 
@@ -90,61 +104,54 @@ def get_candidate(word, word_list, window_size):
     return None, word_list
 
 
-def big_nwx_test(wg, phrase, length=20):
+def big_nwx_test(wg, phrase, length=20, max_tail=20):
     word_list = phrase.split(" ")
     n_length = len(word_list)
-    window_size = min(8, n_length)
-    desired_window_size = 8
-
-    if n_length < window_size:
-        window_size = n_length
-    else:
+    window_size = min(MAX_DEPTH, n_length)
+    if n_length > window_size:
         word_list = word_list[-window_size:]
+    sequence = list(word_list)
 
-    sequence = []
-    sequence.extend(word_list)
-
-    while (len(sequence) < length):
-        # print (f"{window_size=}", end="\r")
-        found_word = False
-        if len(word_list) == 0:
-            break
-
-        word = get_word(wg, word_list, window_size, found_word)
+    while len(sequence) < length:
+        word = get_word(wg, word_list, window_size, False)
         if not word:
-            window_size -= 1
+            window_size = max(min_window, window_size - 1)
             continue
-
-        # Remove the duplicate call - just use 'word' from above
         candidate, word_list = get_candidate(word, word_list, window_size)
-        if candidate:
-            word_list.append(candidate)
-            sequence.append(candidate)
-            found_word = True
-
+        if candidate is None:
+            break
+        word_list.append(candidate)
+        sequence.append(candidate)
         if len(word_list) > window_size:
             word_list = word_list[1:]
-
-        if window_size < desired_window_size and found_word:
+        if window_size < MAX_DEPTH:
             window_size += 1
 
-    if not sequence[-1][-1] in ",.!?":
-        candidate = None
-        while (len(sequence[-1]) > 1
-            and sequence[-1][-1] not in ",.!?"
-            ):
-            word = get_word(wg, sequence, window_size, False)
-            candidate, word_list = get_candidate(word, word_list, window_size)
-            if not candidate:
-                sequence[-1] += "."
+    # punctuation tail
+    tail = 0
+    while (tail < max_tail
+           and sequence
+           and sequence[-1]
+           and sequence[-1][-1] not in ".!?"):
+        word = get_word(wg, word_list, window_size, False)
+        if not word:
+            window_size = max(min_window, window_size - 1)
+            if window_size == min_window:
+                sequence[-1] = sequence[-1].rstrip(",;:") + "."
                 break
-            elif candidate and candidate[-1] not in ",.!?":
-                candidate += "." # throw away word?
-                break
-        if not candidate:
-            candidate, word_list = get_candidate(word, word_list, window_size)
+            continue
+        candidate, word_list = get_candidate(word, word_list, window_size)
+        if candidate is None:
+            sequence[-1] = sequence[-1].rstrip(",;:") + "."
+            break
+        word_list.append(candidate)
+        if len(word_list) > window_size:
+            word_list = word_list[1:]
         sequence.append(candidate)
+        tail += 1
 
+    if sequence and sequence[-1] and sequence[-1][-1] not in ".!?":
+        sequence[-1] = sequence[-1].rstrip(",;:") + "."
 
     return sequence
 
@@ -161,6 +168,7 @@ def main():
     wordgoblin = WordGoblin("")
     wordgoblin.load(args.data_file or "combined_prose_3.pickle")
     wordgoblin.build_sampling_cache()
+    tweengoblin = TweenGoblin(wordgoblin.word_distances)
     stop = timer()
     print(f"Loading Time taken: {stop - start}")
 
@@ -179,8 +187,33 @@ def main():
                 continue
         in_str = (" ".join(buffer) + " " + new_input)
         out = big_nwx_test(wordgoblin, in_str, length=num_words)
+        # tweengoblin magic
+        print (" --- Original ---", end="");print("-"*65)
+        print(" ".join(out)) # print(out)
+        print (" --- Revised  ---", end="");print("-"*65)
+        new_sentence = []
+        no_insert = True
+        inclusion_block=0
+        for idx, word in enumerate(out):
+            new_sentence.append(word)
+            if idx >= len(out) - 1: break
+            found = tweengoblin.tween_search(word, out[idx+1])
+            foundstr = f"c={len(found)} w={found[0][1]}: {found[0][0]}" if found else ""
+            # print(f"{word} [ {foundstr} ] {out[idx+1]}: ")
+            if found and no_insert:
+                new_sentence.append(f"{found[0][0]}[{found[0][1]}]")
+                no_insert = False
+            else:
+                if found:
+                    inclusion_block += 1
+                no_insert = True
+        out = new_sentence
+        # tweengoblin magic end
+
         buffer = out
         print(" ".join(buffer))
+        print (f" --- blocked insert: {inclusion_block}  ---", end="");print("-"*55)
+        inclusion_block = 0
 
 
 

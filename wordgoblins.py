@@ -30,6 +30,7 @@ class WordGoblin():
     def load(self, path):
         with open(path, "rb") as f:
             data = pickle.load(f)
+        if not data: return False
         # New format stores (word_distances, words); old format stored only
         # word_distances, so fall back to reconstructing words from keys.
         if isinstance(data, tuple) and len(data) == 2 and isinstance(data[0], dict):
@@ -54,6 +55,10 @@ class WordGoblin():
                 self.word_distances[word] = converted
 
         self.words = words
+        return True
+
+    def get_random_word(self):
+        return random.choice(self.unique_words)
 
 
     def get_segment(self, word, window):
