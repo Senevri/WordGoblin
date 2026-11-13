@@ -55,7 +55,7 @@ class LetterGoblin(WordGoblin):
         self.letters.append(letter)
 
 
-    def get_letter_distances(self, text):
+    def _get_letter_distances(self, text):
         i = 0
         max_distance = 12
         while text:
@@ -167,12 +167,11 @@ class LetterGoblin(WordGoblin):
 
     #     return "".join(sentence)
 
-    def generate_random_sentence(self, starting_word="T", length=200,
-                                context_len=4, decay=0.5, max_tail=200):
+    def generate_random_sentence(self, starting_word="T", length=200, decay=0.5, max_tail=200):
         out = list(starting_word)
         for _ in range(length):
-            ctx = "".join(out[-context_len:])
-            nxt = self.sample_next_char(ctx, decay=decay)
+            last_char = out[-1] if out else " "
+            nxt = self.sample_next_char(last_char, decay=decay)
             if nxt is None:
                 break
             out.append(nxt)
@@ -181,7 +180,8 @@ class LetterGoblin(WordGoblin):
         # bounded, weighted tail instead of uniform walk
         tail = 0
         while tail < max_tail and (not out or out[-1] not in ".!?"):
-            nxt = self.sample_next_char("".join(out[-context_len:]), decay=decay)
+            last_char = out[-1] if out else " "
+            nxt = self.sample_next_char(last_char, decay=decay)
             if nxt is None:
                 break
             out.append(nxt)
@@ -218,7 +218,7 @@ class LetterGoblin(WordGoblin):
     def sample_next_char(self, char, decay=0.5, max_distance=12):
         per_dist = self.sampling_cache.get(char)
         if not per_dist:
-            return random.choice(self.unique_letters)
+            return random.choice(self.unique_words)
         chars, weights = [], []
         for d, (cs, ws) in per_dist.items():
             if d >= max_distance:
@@ -229,7 +229,7 @@ class LetterGoblin(WordGoblin):
         return random.choices(chars, weights=weights, k=1)[0]
 
     @property
-    def unique_letters(self):
+    def unique_words(self):
         return list(self.letter_distances.keys())
 
     @property
@@ -298,7 +298,7 @@ def main(filename):
     for j in range (3):
         print("-"*80)
         for i in range (10):
-            print(lg.generate_random_sentence(random.choice(lg.unique_letters)))
+            print(lg.generate_random_sentence(random.choice(lg.unique_words)))
     end = timer()
     print(f"Time taken: {end - start}") # Time
 
@@ -334,14 +334,14 @@ def test_three():
         lg = LetterGoblin("")
         lg.load(path)
         lg.build_sampling_cache()
-        print (lg.unique_letters)
-        print(path, len(lg.unique_letters))
+        print (lg.unique_words)
+        print(path, len(lg.unique_words))
         goblins.append(lg)
         print("original goblin phrases")
-        if len(lg.unique_letters) == 0:
+        if len(lg.unique_words) == 0:
             continue
         for i in range(3):
-            word = random.choice(lg.unique_letters)
+            word = random.choice(lg.unique_words)
             print (f"Word: {word}:")
             for j in range(10):
                 print(f"\t{lg.generate_random_sentence(word)}")
@@ -399,50 +399,34 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="A word goblin")
-    parser.add_argument("text_file", help="The text file or path to read")
-
+    parser.add_argument("--file", type=str, help="Path to a .letterpickle file")
+    parser.add_argument("text_file", nargs="?", help="The text file or path to read")
     args = parser.parse_args()
-    # Load text file
 
-    def load_and_generate(text_file):
-        path = pathlib.Path(text_file)
-        if path.is_dir():
-            for file in path.iterdir():
-                if file.suffix in [".txt", ".md"]:
-                    text_file = file
-                    picklefile = pathlib.Path(text_file).with_suffix(".letterpickle")
-                    if picklefile.is_file():
-                        # text = ""
-                        # lg = WordGoblin("")
-                        # lg.load(picklefile)
-                        # lg.build_sampling_cache()
-                        pass
-                    else:
-                        with open(text_file) as f:
-                            text = f.read()
-                        print (f"Working on {text_file}")
-                        lg = LetterGoblin(text)
-                        lg.save(picklefile)
-        lg = test_three()
-        test_four(lg)
-
-    # load_and_generate(args.text_file)
-
-    start = timer()
-    # with open(args.text_file) as f:
-    #     text = f.read()
-    lg = LetterGoblin("")
-    lg.load("combined.letterpickle")
-
-    #lg.save(pathlib.Path(args.text_file).with_suffix(".letterpickle"))
-    lg.build_sampling_cache()
-    # lg = WordGoblin("")
-    # lg.load("combined.pickle")
-    # lg.build_sampling_cache()
-    letters = [l for l in lg.unique_letters if l and (l[0].isupper() or l.startswith("\""))]
-    for i in range(30):
-        word = random.choice(letters)
-        for j in range(3):
-            print(f"\t{lg.generate_random_sentence(word, length=32)}", end="")
-    stop = timer()
-    print(f"Time taken: {stop - start}")
+    if args.file:
+        lg = LetterGoblin("")
+        lg.load(args.file)
+        lg.build_sampling_cache()
+        letters = [l for l in lg.unique_words if l and (l[0].isupper() or l.startswith('"'))]
+        if not letters: letters = list(lg.unique_words)
+        for i in range(3):
+            word = random.choice(letters)
+            print(f"\t{lg.generate_random_sentence(word, length=32)}")
+    elif args.text_file:
+        if args.text_file.endswith(".letterpickle"):
+            lg = LetterGoblin("")
+            lg.load(args.text_file)
+            lg.build_sampling_cache()
+        else:
+            with open(args.text_file) as f:
+                text = f.read()
+            lg = LetterGoblin(text)
+            lg.save(pathlib.Path(args.text_file).with_suffix(".letterpickle"))
+            lg.build_sampling_cache()
+        letters = [l for l in lg.unique_words if l and (l[0].isupper() or l.startswith('"'))]
+        if not letters: letters = list(lg.unique_words)
+        for i in range(3):
+            word = random.choice(letters)
+            print(f"\t{lg.generate_random_sentence(word, length=32)}")
+    else:
+        print("Please provide a text file or a .letterpickle file.")

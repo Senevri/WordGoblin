@@ -25,13 +25,21 @@ class WordGoblin():
 
     def save(self, path):
         with open(path, "wb") as f:
-            pickle.dump(self.word_distances, f)
+            pickle.dump((self.word_distances, self.words), f)
 
     def load(self, path):
         with open(path, "rb") as f:
             data = pickle.load(f)
+        # New format stores (word_distances, words); old format stored only
+        # word_distances, so fall back to reconstructing words from keys.
+        if isinstance(data, tuple) and len(data) == 2 and isinstance(data[0], dict):
+            raw_distances, words = data
+        else:
+            raw_distances = data
+            # class tuple; cannot access keys. Maybe safe, for older format?
+            words = list(raw_distances.keys())
         self.word_distances = {}
-        for word, associations in data.items():
+        for word, associations in raw_distances.items():
             if isinstance(associations, dict):
                 # Already using the new representation
                 self.word_distances[word] = associations
@@ -45,7 +53,7 @@ class WordGoblin():
 
                 self.word_distances[word] = converted
 
-        self.words = list(self.word_distances.keys())
+        self.words = words
 
 
     def get_segment(self, word, window):
@@ -68,7 +76,7 @@ class WordGoblin():
 
     def get_word_distances(self, words):
         i = 0
-        max_distance = 3
+        max_distance = 8
         while words:
             word = words[0]
             #idx_last = max_distance - abs(len(words)-max_distance)
@@ -92,13 +100,13 @@ class WordGoblin():
                 combined_distances[word][pair[1]] = pair[0]
         return combined_distances
 
-    def get_nearby_words(self, word):
+    def get_nearby_words(self, word, max_distance=8):
         if word not in self.word_distances:
             self.word_distances[word] = {}
         distances = self.word_distances[word]
         return [
             (other_word, distance, weight)
-            for (other_word, distance), weight in distances.items()
+            for (other_word, distance), weight in distances.items() if distance <= max_distance
         ]
 
     def get_next_word(self, word):
@@ -106,11 +114,14 @@ class WordGoblin():
             self.word_distances[word] = {}
             return random.choice(self.words)
         distances = self.word_distances[word]
-        return random.choice([
+        candidates = [
             other_word
             for (other_word, distance), weight in distances.items()
             if distance == 1
-        ])
+        ]
+        if not candidates:
+            return random.choice(self.words)
+        return random.choice(candidates)
 
     def get_buffer_words(self, buffer):
         for word in buffer:
@@ -182,6 +193,8 @@ class WordGoblin():
         while not (word.endswith(".") or word == "."):
             word = self.get_next_word(word)
             sentence.append(word)
+            if len(sentence) > length * 4:
+                break
 
         return " ".join(sentence)
 
@@ -200,7 +213,7 @@ class WordGoblin():
                 self._sampling_cache[word] = (words, weights)
 
     @property
-    def unique_letters(self):
+    def unique_words(self):
         return list(self.word_distances.keys())
 
     @property
@@ -234,7 +247,7 @@ def threaded_gen(text):
     for t in threads:
         t.join()
 
-def main(filename):
+def _main(filename):
     from pprint import pprint
     print("Hello from wordgoblin!")
 
@@ -269,7 +282,7 @@ def main(filename):
     for j in range (3):
         print("-"*80)
         for i in range (10):
-            print(wg.generate_random_sentence(random.choice(wg.unique_letters)))
+            print(wg.generate_random_sentence(random.choice(wg.unique_words)))
     end = timer()
     print(f"Time taken: {end - start}") # Time
 
@@ -298,31 +311,7 @@ def test_two():
     print(wg1.word_distances)
     print(wg1.word_distances["the"])
 
-def two_word_search():
-    wg = WordGoblin("")
-    wg.load("combined.pickle")
-    wg.build_sampling_cache()
 
-
-    for j in range(3):
-        print("-"*80)
-        sentence = []
-        _word = random.choice(wg.unique_letters)
-        for i in range(20):
-            # find second word
-            words = wg.get_nearby_words(_word)
-            if not words:
-                continue
-            word2 = random.choice(words)
-            for w in wg.word_distances[_word]:
-                print(wg.word_distances[_word][w], w)
-                if 2 == wg.word_distances[_word][w]:
-                    print(f"{_word}: {word2}: {w}")
-                    sentence.extend([_word, word2[0]])
-                    _word = w
-                    break
-
-        print(" ".join(sentence))
 
 def test_three():
     start = timer()
@@ -331,11 +320,11 @@ def test_three():
         wg = WordGoblin("")
         wg.load(path)
         wg.build_sampling_cache()
-        print(path, len(wg.unique_letters))
+        print(path, len(wg.unique_words))
         goblins.append(wg)
         print("original goblin phrases")
         for i in range(3):
-            word = random.choice(wg.unique_letters)
+            word = random.choice(wg.unique_words)
             print (f"Word: {word}:")
             for j in range(10):
                 print(f"\t{wg.generate_random_sentence(word)}")
@@ -411,7 +400,7 @@ def main(path):
     wg = WordGoblin("")
     wg.load("combined.pickle")
     wg.build_sampling_cache()
-    words = [w for w in wg.unique_letters if w and (w[0].isupper() or w.startswith("..."))]
+    words = [w for w in wg.unique_words if w and (w[0].isupper() or w.startswith("..."))]
     for i in range(30):
         word = random.choice(words)
         print (f"Word: {word}:")
@@ -432,4 +421,4 @@ if __name__ == "__main__":
     # Load text file
 
     path = pathlib.Path(args.text_file)
-    two_word_search()
+    main(path)
