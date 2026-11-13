@@ -133,45 +133,6 @@ class WordGoblin():
                 else:
                     yield other_word
 
-
-
-    # def generate_random_sentence(self, starting_word="the"):
-    #     nearby_words = self.get_nearby_words(starting_word)
-    #     # print(nearby_words)
-    #     sentence = [starting_word]
-    #     for i in range(16):
-    #         words_in_irange = [word for word, distance in nearby_words if distance < 2]
-    #         if len(words_in_irange) < 2:
-    #             break
-    #         word = random.choice(words_in_irange)
-    #         sentence.append(word)
-    #         nearby_words = self.get_nearby_words(word)
-    #     return " ".join(sentence)
-
-    # def generate_random_sentence(self, starting_word="the"):
-    #     nearby_words = self.get_nearby_words(starting_word)
-    #     sentence = [starting_word]
-
-    #     for i in range(16):
-    #         candidates = [
-    #             (word, weight)
-    #             for word, distance, weight in nearby_words
-    #             if distance < 2
-    #         ]
-
-    #         if sum(weight for word, weight in candidates) < 2:
-    #             break
-
-    #         words = [word for word, weight in candidates]
-    #         weights = [weight for word, weight in candidates]
-
-    #         word = random.choices(words, weights=weights, k=1)[0]
-
-    #         sentence.append(word)
-    #         nearby_words = self.get_nearby_words(word)
-
-    #     return " ".join(sentence)
-
     def generate_random_sentence(self, starting_word="the", length=16):
         sentence = [starting_word]
         word = starting_word
