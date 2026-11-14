@@ -166,6 +166,29 @@ class LetterGoblin(WordGoblin):
     #         sentence.append(word)
 
     #     return "".join(sentence)
+    def generate_random_word(self, starting_word = "t", length=5):
+        out = list(starting_word)
+        last_char = out[-1] if out else " "
+        next_char = " "
+        for i in range(length)
+            candidate = self.get_next_word(last_char)
+        
+            for idx, c in enumerate(out):
+                if candidate[1].index(c) == i:
+                    continue
+                # last match, no perfect match
+                break
+        try: 
+            if idx == len(starting_word) 
+               out.append(candidate[idx+1] 
+            else: 
+               
+        except IndexError:
+            out.append(" ")
+
+        
+        return "".join(out)
+        
 
     def generate_random_sentence(self, starting_word="T", length=200, decay=0.5, max_tail=200):
         out = list(starting_word)

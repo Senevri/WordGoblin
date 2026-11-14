@@ -213,11 +213,11 @@ def main():
 
         buffer = out
         print(" ".join(buffer))
-        print (f" --- blocked insert: {inclusion_block}  ---", end="");print("-"*55)
-        inclusion_block = 0
-
-
-
+#        print (f" --- blocked insert: {inclusion_block}  ---", end="");print("-"*55)
+#        inclusion_block = 0
+#
+#
+#
 
 
 
