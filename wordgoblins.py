@@ -82,6 +82,7 @@ class WordGoblin():
     def get_word_distances(self, words):
         i = 0
         max_distance = 8
+        long_file = False if len(words)<10000 else True
         while words:
             word = words[0]
             #idx_last = max_distance - abs(len(words)-max_distance)
@@ -91,7 +92,8 @@ class WordGoblin():
             words = words[1:]
             i += 1
             # self.word_distances[word] = sorted(self.word_distances[word], key=lambda x: x[0])
-            print(f"{i}/{len(words)}", end="\r")
+        if long_file and i % 100==0:
+                print(f"{i}/{len(words)}", end="\r")
         return self.word_distances
 
     def combine_distances(self):
