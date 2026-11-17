@@ -288,6 +288,9 @@ class SemanticGoblin:
         return self._facts
 
     def _split_sentences(self, text: str) -> List[str]:
+        # FIXME: Naive implementation. will happily split on abbreviations,
+        # initials, decimal numbers, and punctuation inside quoted dialogue.
+        # It also discards the delimiters.
         """Split text into sentences on '.', '!', '?'."""
         if not text.strip():
             return []
@@ -314,13 +317,19 @@ def main():
 
     parser = argparse.ArgumentParser(description="Semantic Goblin")
     parser.add_argument("text_file", help="The text file or path to read")
+    parser.add_argument("--pickle", help="The pickle file or path to read")
 
     args = parser.parse_args()
 
     path = Path(args.text_file)
-    sg = SemanticGoblin(path.read_text())
-    facts = sg.extract()
-    sg.save_facts(str(Path(path).with_suffix(".facts.pickle")))
+    if not args.pickle:
+        sg = SemanticGoblin(path.read_text())
+        facts = sg.extract()
+        sg.save_facts(str(Path(path).with_suffix(".facts.pickle")))
+    else:
+        sg = SemanticGoblin("")
+        sg.load_facts(args.pickle)
+        facts = sg._facts
 
     print("=" * 70)
     print("SEMANTIC GOBLIN — Extracted Facts")
