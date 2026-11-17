@@ -10,7 +10,7 @@ class WordGoblin():
     def __init__(self, text_str):
         self.word_distances = {}
         self.words = self.get_words(text_str)
-        self.word_distances = self.get_word_distances(self.words)
+        self.word_distances:dict = self.get_word_distances(self.words)
         self._sampling_cache = {}
 
     def get_words(self, text):
