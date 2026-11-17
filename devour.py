@@ -235,8 +235,10 @@ def main():
         print(f"Saved combined.{args.level} model to {out_path} "
               f"({len(combined.words)} entries)")
     else:
-        g = build_goblin(path, level=args.level)
-        combined = combine_goblins({path.stem: g}, level=args.level)
+        stem, distances, cache = build_goblin(path, level=args.level)
+        goblin_cls, suffix, dist_attr = _load_goblin_class(args.level)
+        g = _make_goblin(goblin_cls, dist_attr, distances, cache)
+        combined = combine_goblins({stem: g}, level=args.level)
         out_path = Path(args.out)
         combined.save(out_path)
         print(f"Saved combined.{args.level} model to {out_path}")

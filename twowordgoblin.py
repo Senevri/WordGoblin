@@ -11,6 +11,81 @@ from wordgoblins import WordGoblin
 from lettergoblins import LetterGoblin
 from lettergoblins_fixed_final import LetterGoblin as LG2
 from lettergoblins_fixed_v3 import LetterGoblin as LG3
+from typing import List, Tuple, Optional
+
+# Type alias for n-word search candidates
+Candidate = Tuple[str, int]
+
+# Module-level cache for n_word_search_cached
+_lookup_cache: dict = {}
+
+
+def _n_word_search(wg, word_list: list) -> list:
+    """Predict the word(s) that follow ``word_list`` verbatim.
+
+    The first word anchors the check: ``word_list[i]`` must appear at
+    distance ``i - 1`` from ``word_list[0]`` (distance 0 == immediately
+    follows). If the whole window matches, the candidates are the words at
+    distance 0 from the last word of the window. Returns ``[]`` when the
+    sequence is not present in the training text.
+    """
+    if not word_list:
+        return []
+    anchor = word_list[0]
+    wd = wg.word_distances.get(anchor)
+    if not wd:
+        return []
+    for i, target in enumerate(word_list[1:], start=1):
+        if (target, i - 1) not in wd:
+            return []
+
+    last_word = word_list[-1]
+    return wg.get_nearby_words(last_word, 0)
+
+
+def n_word_search(wg, word_list: list) -> list:
+    """Predict the word(s) that follow ``word_list`` using chain validation.
+
+    Each adjacent pair in ``word_list`` must be a real distance-0 transition.
+    If the chain is valid, returns candidates at distance 0 from the last
+    word. Returns ``[]`` when any pair is invalid or the list is empty.
+    """
+    if not word_list:
+        return []
+    for i in range(len(word_list) - 1):
+        anchor, target = word_list[i], word_list[i + 1]
+        wd = wg.word_distances.get(anchor)
+        if not wd or (target, 0) not in wd:
+            return []
+    last_word = word_list[-1]
+    return wg.get_nearby_words(last_word, 0)
+
+
+def build_ngram_cache(wg, max_n=4):
+    """Pre-compute n-gram lookups into ``wg.ngram_cache``.
+
+    Populates a dict keyed by the first word of each n-gram.  Values are
+    dicts keyed by a tuple of the remaining words, mapping to the list of
+    candidates that ``n_word_search`` would return.
+
+    This speeds up repeated lookups when the goblin is unpickled and
+    ``word_distances`` may be sparse or rebuilt lazily.
+    """
+    cache = {}
+    words = [w for w in wg.unique_words if w] if not is_letter_goblin(wg) else wg.unique_words
+    for start_word in words:
+        wd = wg.word_distances.get(start_word)
+        if not wd:
+            continue
+        for (neighbor, distance), weight in wd.items():
+            if distance != 0:
+                continue
+            key = (neighbor, distance)
+            if start_word not in cache:
+                cache[start_word] = {}
+            candidates = wg.get_nearby_words(neighbor, 0)
+            cache[start_word][key] = candidates
+    wg.ngram_cache = cache
 
 def get_candidates(wg, start=None):
     nearby = wg.get_nearby_words(start)
@@ -179,7 +254,7 @@ def two_word_search(picklefile=None,n=10, max_words=8):
             print("2: " + generate_short_sentence(lg2, start=start_word, max_words=max_words))
             print("3: " + generate_short_sentence(lg3, start=start_word, max_words=max_words))
 
-def n_word_search(picklefile=None,n=10, max_words=8, n_words=3):
+def n_word_search_cli(picklefile=None,n=10, max_words=8, n_words=3):
     if picklefile:
         path = Path(picklefile)
         if not path.is_file():
@@ -252,6 +327,9 @@ if __name__ == "__main__":
     args = parser.parse_args()
     #two_word_search(args.picklefile, args.n, args.max_words)
     start = timer()
-    n_word_search(args.picklefile, args.n, args.max_words, n_words=3)
+    n_word_search_cli(args.picklefile, args.n, args.max_words, n_words=3)
     stop = timer()
     print(f"Time: {stop-start}") # {stop-start)
+
+
+

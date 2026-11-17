@@ -155,12 +155,39 @@ def big_nwx_test(wg, phrase, length=20, max_tail=20):
 
     return sequence
 
+def tweengoblin_magic(tweengoblin: TweenGoblin, out: list, annotate=False):
+
+    print (" --- Original ---", end="");print("-"*65)
+    print(" ".join(out)) # print(out)
+    print (" --- Revised  ---", end="");print("-"*65)
+    new_sentence = []
+    no_insert = True
+    inclusion_block=0
+    for idx, word in enumerate(out):
+        new_sentence.append(word)
+        if idx >= len(out) - 1: break
+        found = tweengoblin.tween_search(word, out[idx+1])
+        foundstr = f"c={len(found)} w={found[0][1]}: {found[0][0]}" if found else ""
+        # print(f"{word} [ {foundstr} ] {out[idx+1]}: ")
+        if found and no_insert:
+            if annotate:
+                new_sentence.append(f"{found[0][0]}[{found[0][1]}]")
+            else:
+                new_sentence.append(found[0][0])
+            no_insert = False
+        else:
+            if found:
+                inclusion_block += 1
+            no_insert = True
+    out = new_sentence
+    return out
 
 def main():
     import argparse
     start = timer()
     parser = argparse.ArgumentParser(description="A word goblin")
     parser.add_argument("data_file", help="The text/pickle file or path to read")
+    parser.add_argument("--text", help="one-off run based on text")
 
     args = parser.parse_args()
     # Load text file
@@ -173,6 +200,14 @@ def main():
     print(f"Loading Time taken: {stop - start}")
 
     num_words:int = 140
+
+    if args.text:
+        out = big_nwx_test(wordgoblin, args.text, length=num_words)
+        # tweengoblin magic
+        out = tweengoblin_magic(tweengoblin, out, annotate=False)
+        # tweengoblin magic end
+        print(" ".join(out))
+        return
 
     buffer = []
     while True:
@@ -188,37 +223,12 @@ def main():
         in_str = (" ".join(buffer) + " " + new_input)
         out = big_nwx_test(wordgoblin, in_str, length=num_words)
         # tweengoblin magic
-        print (" --- Original ---", end="");print("-"*65)
-        print(" ".join(out)) # print(out)
-        print (" --- Revised  ---", end="");print("-"*65)
-        new_sentence = []
-        no_insert = True
-        inclusion_block=0
-        for idx, word in enumerate(out):
-            new_sentence.append(word)
-            if idx >= len(out) - 1: break
-            found = tweengoblin.tween_search(word, out[idx+1])
-            foundstr = f"c={len(found)} w={found[0][1]}: {found[0][0]}" if found else ""
-            # print(f"{word} [ {foundstr} ] {out[idx+1]}: ")
-            if found and no_insert:
-                new_sentence.append(f"{found[0][0]}[{found[0][1]}]")
-                no_insert = False
-            else:
-                if found:
-                    inclusion_block += 1
-                no_insert = True
-        out = new_sentence
+        out = tweengoblin_magic(out)
         # tweengoblin magic end
-
         buffer = out
         print(" ".join(buffer))
         print (f" --- blocked insert: {inclusion_block}  ---", end="");print("-"*55)
         inclusion_block = 0
-
-
-
-
-
 
 if __name__ == '__main__':
     main()
