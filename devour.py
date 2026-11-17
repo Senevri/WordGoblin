@@ -132,11 +132,76 @@ def _build_silently(directory, level):
         return build_goblins(directory, level=level)
 
 
+def _resolve_pickle_path(pickle_path, level="word"):
+    """Return the actual .pickle/.letterpickle file for a user-supplied path.
+
+    If the path already points at an existing file it is used verbatim;
+    otherwise the level suffix is appended (e.g. ``foo`` -> ``foo.pickle``).
+    """
+    pickle_path = Path(pickle_path)
+    if pickle_path.is_file():
+        return pickle_path
+    _, suffix, _ = _load_goblin_class(level)
+    return pickle_path.with_suffix(suffix)
+
+
+def _load_goblin_from_pickle(pickle_path, level="word"):
+    """Load a goblin instance from a specific pickle file (read-only)."""
+    goblin_cls, _, dist_attr = _load_goblin_class(level)
+    path = _resolve_pickle_path(pickle_path, level)
+    with open(path, "rb") as f:
+        data = pickle.load(f)
+    # New format stores (distances, words); old format stored only distances.
+    if isinstance(data, tuple) and len(data) == 2 and isinstance(data[0], dict):
+        distances = data[0]
+    else:
+        distances = data
+    goblin = goblin_cls("")
+    setattr(goblin, dist_attr, distances)
+    goblin.words = list(distances)
+    return goblin
+
+
+def combine_pickles(pickle_paths, level="word", out="combined"):
+    """Combine two existing model pickles into a brand-new pickle.
+
+    Nondestructive: the input pickles are only read, never modified, and the
+    output is written to a separate ``--out`` path. Refuses to clobber an
+    input pickle. Returns the combined goblin.
+    """
+    if len(pickle_paths) != 2:
+        raise SystemExit("--combine expects exactly two pickle files.")
+
+    resolved = [_resolve_pickle_path(p, level) for p in pickle_paths]
+    out_path = Path(out)
+    for inp in resolved:
+        try:
+            if inp.resolve() == out_path.resolve():
+                raise SystemExit(
+                    f"Refusing to overwrite input pickle {inp} with --out {out}."
+                )
+        except OSError:
+            pass
+
+    goblins = {
+        _resolve_pickle_path(p, level).stem: _load_goblin_from_pickle(p, level)
+        for p in resolved
+    }
+    combined = combine_goblins(goblins, level=level)
+    combined.save(out_path)
+    print(f"Saved combined.{level} model to {out_path} "
+          f"({len(combined.words)} entries)")
+    return combined
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Devour text into goblin models"
     )
-    parser.add_argument("text_file", help="The text file or directory to read")
+    parser.add_argument(
+        "text_file", nargs="?",
+        help="The text file or directory to read",
+    )
     parser.add_argument(
         "--level", choices=["word", "letter"], default="word",
         help="Model level to build (default: word)",
@@ -145,7 +210,19 @@ def main():
         "--out", default="combined",
         help="Combined output base name (default: combined)",
     )
+    parser.add_argument(
+        "--combine", nargs=2, metavar=("PICKLE1", "PICKLE2"),
+        help="Combine two existing model pickles into a new pickle "
+             "(nondestructive; inputs are left untouched).",
+    )
     args = parser.parse_args()
+
+    if args.combine:
+        combine_pickles(args.combine, level=args.level, out=args.out)
+        return
+
+    if not args.text_file:
+        parser.error("a text_file is required unless --combine is given")
 
     path = Path(args.text_file)
     if path.is_dir():
