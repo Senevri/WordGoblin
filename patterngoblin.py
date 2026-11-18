@@ -1,13 +1,14 @@
-"""PatternGoblin -- recognize 'the X of Y' linguistic patterns.
+"""PatternGoblin -- recognize structural 'the X of Y' templates.
 
-A new goblin that *recognizes* (not generates) the "the X of Y" pattern
-from text or from an existing WordGoblin .pickle model.
+A template recognizer that identifies the grammatical shape of 'the X of Y' 
+patterns in text or from an existing WordGoblin .pickle model. 
+It counts template occurrences and does not extract semantic relations.
 
 Usage
 -----
     # From raw text:
     goblin = PatternGoblin()
-    goblin.feed("The art of war is the sound of silence.")
+    goblin.feed("The art of war.")
     print(goblin.patterns)
 
     # From a pickle file:
@@ -18,7 +19,7 @@ Usage
 Data model
 ----------
 ``patterns``  -- dict mapping ``(x_word, y_word, template) -> count``
-    where ``template`` is a string "the X of Y", e.g. "the art of war".
+    where ``template`` is a string \"the X of Y\", e.g. \"the art of war\".
 
 ``raw_patterns`` -- list of every match found, in order of occurrence:
     [(start_pos, end_pos, x_word, y_word, full_match), ...]
@@ -26,7 +27,7 @@ Data model
 Class API
 ---------
 - ``PatternGoblin()``            -- empty goblin (no data loaded)
-- ``.feed(text)``                -- parse text and extract patterns
+- ``.feed(text)``                -- parse text and extract templates
 - ``.load_pickle(path)``         -- class method: load a .pickle and scan it
 - ``.extract_patterns_from_model()`` -- walk word_distances, yield patterns
 - ``.get_templates()``           -- return unique templates sorted by count
@@ -66,7 +67,7 @@ _MIN_WORD_LEN = 2
 
 
 class PatternGoblin:
-    """Recognize 'the X of Y' patterns in text or goblin models."""
+    """Recognize 'the X of Y' templates in text or goblin models."""
 
     def __init__(self):
         # {(x_word, y_word, template): count}
@@ -78,11 +79,17 @@ class PatternGoblin:
     # Feeding data
     # ------------------------------------------------------------------ #
     def feed(self, text: str) -> "PatternGoblin":
-        """Parse *text* and extract all 'the X of Y' patterns.
+        """Parse *text* and extract all 'the X of Y' templates.
 
         Returns self for chaining.
         """
         for m in _PATTERN_RE.finditer(text):
+            # Check if this match is part of a relation clause (e.g., "the X of Y is Z")
+            # If it is, we skip it to avoid duplicating SemanticGoblin's work.
+            tail = text[m.end():].lstrip()
+            if re.match(r"^(?:is|known as|refers to|refers)\b", tail, re.IGNORECASE):
+                continue
+
             x_raw = m.group(1).strip()
             y_word = m.group(2)
 
@@ -122,30 +129,10 @@ class PatternGoblin:
         with open(path, "rb") as f:
             data = pickle.load(f)
 
-        # New format: (word_distances, words_list)
-        if isinstance(data, tuple) and len(data) == 2:
-            word_distances, words = data
-        else:
-            word_distances = data
-            words = list(word_distances.keys())
+        # New format: (word_distances, words)
+        word_distances = data.get("word_distances")
+        words = data.get("words")
 
-        # Reconstruct text from the word list to scan for patterns.
-        text = " ".join(words)
-
-        goblin = cls()
-        goblin.feed(text)
-        return goblin
-
-    def extract_patterns_from_model(
-        self,
-        word_distances: Optional[Dict] = None,
-        words: Optional[List[str]] = None,
-    ) -> "PatternGoblin":
-        """Manually feed a (word_distances, words) pair for pattern extraction.
-
-        Useful when you already have a loaded WordGoblin and want to avoid
-        re-reading the pickle.
-        """
         if word_distances is None or words is None:
             raise ValueError(
                 "Provide both word_distances and words, or use load_pickle()"
