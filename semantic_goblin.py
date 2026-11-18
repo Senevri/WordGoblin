@@ -16,6 +16,7 @@ class ExtractedFact:
     object: str           # entity Y / value
     confidence: float = 1.0
     source_sentence: str = ""
+    event_type: str = ""  # For action pattern: Physical action, Movement, Expression, Communication, Cognitive, State, Contextual event
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -33,6 +34,50 @@ def _clean_no_articles(s: str) -> str:
     for prefix in ("the ", "a ", "an "):
         if s.startswith(prefix):
             return s[len(prefix):]
+    return s
+
+
+# ── Known entities for capitalization preservation ──────────────────────────
+
+# These are proper nouns that should retain their capitalization
+KNOWN_ENTITIES = frozenset([
+    # Character names
+    "Artemis", "Diana", "Jarvis", "Tony", "Weiss", "Stephen Strange",
+    "Astra", "Anansi", "Amazons", "Twili",
+    # Places
+    "Metropolis", "Centennial Park", "Embassy",
+    # Organizations
+    "Fate", "Fate SRD",
+])
+
+# ── Word sets for pattern matching ──────────────────────────────────────────
+
+AGENT_WORDS = frozenset([
+    "I", "she", "he", "they", "we", "you", "it",
+    "that", "this", "my", "your", "their", "our",
+])
+
+AUXILIARY_VERBS = frozenset([
+    "am", "is", "are", "was", "were", "be", "been",
+    "being", "have", "has", "had", "do", "does", "did",
+    "can", "could", "may", "might", "must", "shall",
+    "should", "will", "would",
+])
+
+POSSESSION_VERBS = frozenset([
+    "have", "has", "had",
+])
+
+def _clean_preserve_case(s: str) -> str:
+    """Clean string but preserve capitalization for known entities."""
+    s = s.strip()
+    s = re.sub(r"['\"]+", "", s)
+    s = re.sub(r"\s+", " ", s)
+    # Capitalize known entities
+    for entity in KNOWN_ENTITIES:
+        # Use word boundary matching to avoid partial matches
+        pattern = r'\b' + re.escape(entity) + r'\b'
+        s = re.sub(pattern, entity, s, flags=re.IGNORECASE)
     return s
 
 
@@ -94,14 +139,14 @@ def _extract_of_is(sentence: str, m) -> Optional[ExtractedFact]:
 
 # --- 5. Relational: "X has Y" ---
 _RE_HAS = re.compile(
-    r"(?P<subject>\w[\w\s]*?)\s+has\s+(?P<object>\w[\w\s]*?)(?:\.|$)",
+    r"(?P<subject>\w[\w\s]*?)\s+(?:has|have)\s+(?P<object>\w[\w\s]*?)(?:\.|$)",
     re.IGNORECASE,
 )
 
 def _extract_has(sentence: str, m) -> Optional[ExtractedFact]:
-    subj = _clean_no_articles(m.group("subject"))
+    subj = _clean_preserve_case(m.group("subject"))
     obj = _clean_no_articles(m.group("object"))
-    return ExtractedFact("has", subj, "has", obj, source_sentence=sentence)
+    return ExtractedFact("has", subj, "--has-->", obj, source_sentence=sentence)
 
 
 # --- 6. Relational: "X belongs to Y" ---
@@ -167,17 +212,121 @@ def _extract_attr(sentence: str, m) -> Optional[ExtractedFact]:
     return None
 
 
-# --- 11. Action: "X verb the Y" ---
+# --- 11. Action: "X verb the Y" with event type classification ---
+
+# Verbs that indicate movement
+_MOVEMENT_VERBS = frozenset([
+    "appears", "comes", "goes", "moves", "walks", "runs", "jumps", "steps",
+    "enters", "exits", "leaves", "arrives", "returns", "displaces",
+])
+
+# Verbs that indicate expression
+_EXPRESSION_VERBS = frozenset([
+    "raises", "hides", "huffs", "makes", "smiles", "grins", "laughs",
+    "frowns", "nods", "shakes", "tilts", "gestures",
+])
+
+# Verbs that indicate communication
+_COMMUNICATION_VERBS = frozenset([
+    "says", "tells", "asks", "answers", "speaks", "whispers", "shouts",
+    "explains", "mentions", "replies", "responds",
+])
+
+# Verbs that indicate cognitive processes
+_COGNITIVE_VERBS = frozenset([
+    "considers", "thinks", "realizes", "understands", "notices", "recognizes",
+    "decides", "wonders", "remembers", "forgets", "believes", "suspects",
+])
+
+# Verbs that indicate states
+_STATE_VERBS = frozenset([
+    "is", "are", "was", "were", "seems", "feels", "remains", "stays",
+])
+
+# Verbs that indicate contextual events (past tense, narrative)
+_CONTEXTUAL_VERBS = frozenset([
+    "came", "went", "gave", "took", "made", "set", "put", "held",
+    "picked", "handed", "programmed", "mentioned", "approved",
+])
+
+# Verbs that indicate physical actions
+_PHYSICAL_VERBS = frozenset([
+    "cracks", "closes", "opens", "sets", "grabs", "holds", "studies",
+    "finishes", "checks", "feels", "taps", "brushes", "forms",
+])
+
+def _classify_event_type(action_word: str) -> str:
+    """Classify an action word into an event type."""
+    action_lower = action_word.lower()
+    if action_lower in _MOVEMENT_VERBS:
+        return "Movement"
+    elif action_lower in _EXPRESSION_VERBS:
+        return "Expression"
+    elif action_lower in _COMMUNICATION_VERBS:
+        return "Communication"
+    elif action_lower in _COGNITIVE_VERBS:
+        return "Cognitive"
+    elif action_lower in _STATE_VERBS:
+        return "State"
+    elif action_lower in _CONTEXTUAL_VERBS:
+        return "Contextual event"
+    elif action_lower in _PHYSICAL_VERBS:
+        return "Physical action"
+    else:
+        # Default to Physical action for unknown verbs
+        return "Physical action"
+
+_agent_words_pattern = "|".join(
+    sorted(map(re.escape, AGENT_WORDS), key=len, reverse=True)
+)
+_AGENT_PATTERN = r'(?:[A-Z]\w+|\b(?:' + _agent_words_pattern + r')\b)\w*'
 _RE_ACTION = re.compile(
-    r"(?P<agent>\w[\w\s]*?)\s+(?P<action>\w+)\s+(?:the|a|an)\s+(?P<patient>\w[\w\s]*?)(?:\.|$)",
-    re.IGNORECASE,
+    r'(?P<agent>' + _AGENT_PATTERN + r')\b\s+(?P<action>\w+)\s+(?:the|a|an)?\s*(?P<patient>\w[\w\s]*?)(?:\.|$)',
 )
 
 def _extract_action(sentence: str, m) -> Optional[ExtractedFact]:
-    agent = _clean_no_articles(m.group("agent"))
+    agent = m.group("agent").strip()
     action = m.group("action")
-    patient = _clean_no_articles(m.group("patient"))
-    return ExtractedFact("action", agent, "action", f"{action} {patient}", source_sentence=sentence)
+    patient = m.group("patient").strip()
+
+    # Filter out garbage: agent should be a proper noun or pronoun, not a random word
+    # Common garbage patterns: "not", "and", "or", "but", "if", "unless", etc.
+    garbage_words = frozenset([
+        "not", "and", "or", "but", "if", "unless", "when", "while", "where",
+        "what", "which", "who", "whom", "whose", "that", "this", "these",
+        "those", "there", "here", "then", "than", "so", "as", "to", "for",
+        "with", "from", "in", "on", "at", "by", "of", "up", "out", "off",
+        "over", "under", "again", "further", "once", "only", "very",
+        "also", "just", "even", "still", "already", "yet", "now", "always",
+        "never", "ever", "sometimes", "often", "usually", "probably",
+        "maybe", "perhaps", "certainly", "definitely", "absolutely",
+        "actually", "basically", "essentially", "literally", "figuratively",
+    ])
+
+    agent_lower = agent.lower().strip()
+    if agent_lower in garbage_words:
+        return None
+
+    # Filter out possession verbs - these are handled by the 'has' pattern
+    action_lower = action.lower().strip()
+    if action_lower in POSSESSION_VERBS:
+        return None
+
+    # Also filter if agent is too short (single letter except I, A)
+    if len(agent_lower) == 1 and agent_lower not in ("i", "a"):
+        return None
+
+    # Classify event type
+    event_type = _classify_event_type(action)
+
+    # Use preserve case for proper nouns
+    agent_clean = _clean_preserve_case(agent)
+    patient_clean = _clean_preserve_case(patient)
+
+    return ExtractedFact(
+        "action", agent_clean, "action", f"{action} {patient_clean}",
+        source_sentence=sentence, event_type=event_type
+    )
 
 
 # --- 12. Comparative: "X is more Y than Z" ---

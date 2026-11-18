@@ -1,9 +1,19 @@
 """Tests for wordgoblins.WordGoblin."""
+import sys
 import pickle
 
 import pytest
 
+from pathlib import Path
+
+SOURCE_DIR = Path(__file__).resolve().parent.parent
+if SOURCE_DIR not in sys.path:
+    print(SOURCE_DIR)
+    sys.path.append(SOURCE_DIR)
+
+
 from wordgoblins import WordGoblin
+
 
 
 def test_get_words_splits_on_whitespace():
@@ -88,11 +98,9 @@ def test_build_sampling_cache_filters_distance_below_one(wg):
         assert words
         assert len(words) == len(weights)
         # distance < 1 means only distance 0 survives.
-        assert all(
-            distance == 0
-            for (other, distance) in wg.word_distances[word]
-            if other in words
-        )
+        # Check that each word in the cache has a distance-0 entry.
+        for other in words:
+            assert (other, 0) in wg.word_distances[word]
 
 
 def test_sampling_cache_is_lazy_and_cached(wg):

@@ -28,3 +28,9 @@ def wg(sample_text):
     goblin.build_sampling_cache()
     log.info(f"Unique words: {len(goblin.unique_words)}")
     return goblin
+
+
+@pytest.fixture
+def phrase():
+    # A known phrase that appears verbatim in the training text.
+    return "You know that feeling when"

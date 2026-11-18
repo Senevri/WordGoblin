@@ -60,36 +60,33 @@ def two_word_search(wg, word_tuple):
         _word = tw[0]
 
 def n_word_search(wg, word_list: List[str]) -> List[Candidate]:
-    """Predict the word(s) that follow ``word_list`` verbatim.
+    """Return the word(s) that follow word_list verbatim.
 
-    The first word anchors the check: ``word_list[i]`` must appear at
-    distance ``i - 1`` from ``word_list[0]`` (distance 0 == immediately
-    follows). If the whole window matches, the candidates are the words at
-    distance 0 from the last word of the window. Returns ``[]`` when the
-    sequence is not present in the training text.
+    Position-aware: finds every place word_list appears as a *consecutive*
+    run in wg.words and returns the word(s) that follow those runs,
+    weighted by frequency. Returns [] when the phrase does not appear
+    verbatim. This is what makes known phrases reproduce verbatim -- unlike
+    WordGoblin.get_nearby_words which aggregates distances across every
+    context of a word and loses position information.
     """
     if not word_list:
         return []
-    anchor = word_list[0]
-    wd = wg.word_distances.get(anchor)
-    if not wd:
+    words = getattr(wg, "words", [])
+    if not words:
         return []
-    # wd = [(w[0].lower(), *w[1:])
-    #          for w in wd]
-    # word_list = [w.lower() for w in word_list]
-    # # Verify the window against the anchor: word_list[i] at distance i-1.
-    # O(n) dict lookups.
-    for i, target in enumerate(word_list[1:], start=1):
-        if (target, i - 1) not in wd:
-            return []
-
-    # The word that follows the whole window is the one immediately after
-    # the last word. Anchoring the return on the last word (rather than
-    # extrapolating back to the anchor) keeps verbatim phrases intact even
-    # when the training text is not perfectly linear.
-    last_word = word_list[-1]
-    return wg.get_nearby_words(last_word, 0)
-
+    n = len(word_list)
+    followers: dict = {}
+    for pos, w in enumerate(words):
+        if w != word_list[0]:
+            continue
+        if pos + n > len(words):
+            continue
+        if words[pos:pos + n] != word_list:
+            continue
+        nxt = pos + n
+        if nxt < len(words):
+            followers[words[nxt]] = followers.get(words[nxt], 0) + 1
+    return [(w, 0, c) for w, c in followers.items()]
 
 
 def test():
@@ -133,129 +130,144 @@ def test():
                 break
         print (" ".join(sequence))
 
-def test_n_word_search(wg):
+def test_n_word_search(wg, phrase=""):
+    """n_word_search must return the verbatim continuation of a known phrase.
+
+    Loads the alien-log model, then for several phrases that appear verbatim
+    in the training text asserts that the word immediately after the window
+    (distance 0 from the last word) matches the original text.
+    """
     wg.load("prose_hifi/alien-log.pickle")
     wg.build_sampling_cache()
-    print (len(wg.unique_words))
-    word_list = "You know that feeling when".split(" ")
-    #word_list = "You know".split(" ")
-    n_length = len(word_list)
-    wl = list(word_list)
-    print (" ".join(word_list), end=" ")
-    for j in range(20):
-        sequence = []
-        sequence.extend(word_list)
-        for i in range(20):
+    print("unique_words:", len(wg.unique_words))
 
-            result = n_word_search(wg, wl)
-            print((result, wg, wl))
-            if not result:
-                result = n_word_search(wg, wl)
-            #print(result)
-
-            if result:
-                #result = [w for w in result if w[0] not in sequence]
-
-                weights = [w[2] for w in result]
-                choices = [w[0] for w in result]
-                #print(len(weights), len(choices))
-                try:
-                    #wl.append(random.choices(choices, weights=weights, k=1)[0]) # (word_tuple[1], result[0])
-                    wl.append(random.choice(choices)[0]) # (word_tuple[1], result[0])
-                    #word_list = word_list[1:]
-                    sequence.append(wl[-1])
-                    print(wl)
-                    wl = wl[1:]
-                except IndexError as e:
-                    print((weights, choices, wl, word_list, e))
-                    pass
-
-            #print(sequence, word_list)
-            # if word_list[-1] is not sequence[-1]:
-            #     sequence.append(word_list[-1])
-            if word_list[-1][-1] in (".","!","?"):
-                break
-        print (" ".join(sequence))
+    # (phrase, expected_next_word) pairs taken verbatim from the training text.
+    known = [
+        ("You know", "that"),
+        ("You know that", "feeling"),
+        ("that feeling", "when"),
+    ]
+    for phrase, expected in known:
+        word_list = phrase.split(" ")
+        result = n_word_search(wg, word_list)
+        next_words = [w for (w, _d, _w) in result]
+        print(f"{phrase!r} -> {next_words} (expected {expected!r})")
+        assert expected in next_words, (phrase, expected, next_words)
+        print("OK")
 
 def tiny_nwx_test():
-    wg = WordGoblin("The quick brown fox jumps over the lazy dog")
+    # 1. Added a period so the punctuation break actually works!
+    wg = WordGoblin("The quick brown fox jumps over the lazy dog.")
     wg.build_sampling_cache()
 
     sequence = []
     word_list = "The quick brown".split(" ")
     sequence.extend(word_list)
-    while (word_list[-1][-1] not in (".","!","?")
-        and len(sequence) < 10):
-        word =n_word_search(wg, word_list)
+
+    # 2. Increased length limit slightly so we can see it finish naturally
+    while word_list[-1][-1] not in (".", "!", "?") and len(sequence) < 15:
+        word = n_word_search(wg, word_list)
+
+        if not word:
+            # 3. If we can't find the sequence, drop the oldest word to try a shorter context
+            if len(word_list) > 1:
+                word_list = word_list[1:]
+            else:
+                print("\n[Dead end reached, stopping generation]")
+                break
+            continue # Skip to next iteration to try the shorter context
+
+        # 4. If we found a match, proceed normally
         weights = [w[2] for w in word]
-        if len(word_list)>8:
-            word_list=word_list[1:]
-        if word and word[0]:
-            word_list.append(random.choices(word, weights=weights, k=1)[0][0])
-            sequence.append(word_list[-1])
+        candidate = random.choices(word, weights=weights, k=1)[0][0]
+        word_list.append(candidate)
+        sequence.append(candidate)
 
     print(" ".join(sequence))
+def big_nwx_test(wg, phrase, length=20):
+    word_list = phrase.split(" ")
+    n_length = len(word_list)
+    window_size = min(8, n_length)
 
-def big_nwx_test(wg, length=20):
-    #print (len(wg.unique_words))
-    #word_list = "She looks".split(" ")
 
-    word_list = "You know that feeling when".split(" ")
-    wg.build_sampling_cache()
+    #wg.build_sampling_cache()
 
     sequence = []
     sequence.extend(word_list)
-    # Do some precalc:
-    # words = [w for w in [wg.get_nearby_words(wlw, 0)
-    #          for wlw in word_list]]
-
-    def myrandom(_list, _weights):
-        #_len = len(_list)
-        out_list = []
-        for w in _list:
-            out_list.append([w for i in range(_weights[0])])
-            weights= _weights[1:]
-        choice = random.randint(0, len(_list))
-        return out_list[choice]
 
     #print(word_list)
-    window_size = 8
-    while (len(sequence) < length or word_list[-1][-1] not in (".","!","?", r"\"")):
-        start = timer()
-        word =n_word_search(wg, word_list[-window_size:])
+
+    desired_window_size = 8
+    if n_length< window_size: window_size = n_length
+    while (len(sequence) < length
+        or sequence[-1][-1] not in (".", "!", "?")):
+        context = word_list[-window_size:]
+        word = n_word_search(wg, context)
 
         if not word:
-            window_size-=1
-            word =n_word_search(wg, word_list[-window_size:])
+            if window_size == 2:
+                last_word = word_list[-1]
+                word = n_word_search(wg, last_word.strip(".?!"))
+                if not word:
+                    word = (
+                        "A" if last_word[-1] in (".","!","?")
+                        else wg.get_random_word()
+                    )
+
+                    word = [(word, 0, 1)]
+                break
+            window_size = max(2, window_size - 1)
+            continue
+
+        word =n_word_search(wg, context)
+
         weights = [w[2] for w in word]
-        if len(word_list)>window_size:
-            word_list=word_list[1:]
-        stop = timer()
-        #print(f"Time taken: {stop - start}")
+        if len(word_list) > window_size:
+            word_list = word_list[1:]
 
         if word and word[0]:
+            candidate = random.choices(word, weights=weights, k=1)[0][0]
             # Go with the biggest weight?
             choice = sorted(word, key=lambda x: x[2], reverse=True)[0]
-            word_list.append(random.choices(word, weights=weights, k=1)[0][0])
+            word_list.append(candidate)
             #word_list.append(choice[0])
             #print(word_list)
-            sequence.append(word_list[-1])
+            sequence.append(candidate)
         #print(len(sequence))
         #print(word_list)
-        if len(word_list)<window_size-3:
+        if window_size < desired_window_size:
             window_size+=1
-        if len(word_list) == 1:
+        if len(word_list) == 0:
             break
     print(" ".join(sequence))
 
+
 if __name__ == "__main__":
 
-    #tiny_nwx_test()
+    tiny_nwx_test()
     # test_n_word_search(WordGoblin(""))
+    #phrase = "You know that feeling when"
+    phrase ="Welp,"
     wg = WordGoblin("")
-    wg.load("prose_hifi/alien-log.pickle")
+    start = timer()
+
+    #wg.load("prose_hifi/alien-log.pickle")
     #wg.load("prose_hifi/Light Novel.pickle")
-    #wg.load("combined_prose.pickle")
+    wg.load("combined_prose_2.pickle")
+
+    #wg.load("prose_hifi/Uncommon Talents Wanted.pickle")
+    stop = timer()
+    print(f"Loading Time taken: {stop - start}")
+
+    start = timer()
     wg.build_sampling_cache()
+    stop = timer()
+    print(f"Sampling Cache Time taken: {stop - start}")
+
+    start = timer()
+
     for i in range(20):
-        big_nwx_test(wg, 15)
+        big_nwx_test(wg, phrase, 20)
+
+    stop = timer()
+    print(f"Time taken: {stop - start}")
