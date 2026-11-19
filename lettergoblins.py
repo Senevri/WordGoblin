@@ -8,16 +8,20 @@ from wordgoblins import WordGoblin
 
 class LetterGoblin(WordGoblin):
 
-    def __init__(self, text_str):
+    def __init__(self, text_str, defer_load=False):
         self.letter_distances = {}
-        self.letters = []
-        self.letter_distances = self.get_letter_distances(text_str)
+        self.letters = list(text_str)
+        if not defer_load:
+            self.letter_distances = self._get_letter_distances(text_str)
         self._sampling_cache = {}
-
 
     def save(self, path):
         with open(path, "wb") as f:
             pickle.dump(self.letter_distances, f)
+
+    @property
+    def unique_letters(self):
+        return list(self.letter_distances.keys())
 
     def load(self, path):
         with open(path, "rb") as f:
@@ -37,7 +41,8 @@ class LetterGoblin(WordGoblin):
 
                 self.letter_distances[word] = converted
 
-        self.words = list(self.letter_distances.keys())
+        if not self.letters:
+            self.letters = list(self.letter_distances.keys())
 
     def get_segment(self, letter, window):
         if letter not in self.letter_distances:
@@ -102,6 +107,18 @@ class LetterGoblin(WordGoblin):
             if distance == 1
         ])
 
+    def get_next_letters_fuzzy(self, context):
+        # pooled successors at all distances — current behavior
+        return self.letter_distances.get(context)
+
+    def get_next_letters_exact(self, context):
+        # immediate successors only (distance 0), still pooled across occurrences
+        assoc = self.letter_distances.get(context)
+        if not assoc:
+            return None
+        return {k: v for k, v in assoc.items() if k[1] == 0}
+
+
     def get_buffer_words(self, buffer):
         for word in buffer:
             nearby = [x for x in self.get_nearby_words(word) if x[0].strip()]
@@ -112,8 +129,53 @@ class LetterGoblin(WordGoblin):
                 else:
                     yield other_word
 
+    def get_associated_n_letter_chain(self, context: str, n: int) -> dict:
+        self.chains = {}
+        if self.chains.get((context, n)):
+            return self.chains[(context, n)]
+        chain = {}
+        ctx = context
+        for step in range(n):
+            assoc = self._lookup_with_backoff(ctx)
+            if not assoc:
+                break
+            # distance 0 = immediate successor; use those if present, else fall back to all
+            immediate = {k: v for k, v in assoc.items() if k[1] == 0}
+            use = immediate or assoc
+            chars   = [c for (c, _d) in use]          # ← unwrap to strings here
+            weights = list(use.values())
+            nxt_char = random.choices(chars, weights=weights, k=1)[0]
+            chain[step] = (ctx, chars)
+            ctx = ctx + nxt_char
+        self.chains[(context, n)] = chain
+        return chain
+
+    def _lookup_with_backoff(self, ctx, exact=False):
+        for k in range(len(ctx), 0, -1):
+            suffix = ctx[-k:]
+            assoc = self.letter_distances.get(suffix)
+            if not assoc:
+                continue
+            if exact:
+                assoc = {k: v for k, v in assoc.items() if k[1] == 0}
+                if not assoc:
+                    continue
+            return assoc
+        return None
+
+    def get_source_n_letter_chain(self, n: int) -> dict:
+        """Return n-letter chain: {context: {next_char: count}} for context length n."""
+        chain = {}
+        for i in range(n, len(self.letters)):
+            ctx = ''.join(self.letters[i - n:i])
+            nxt = self.letters[i]
+            chain.setdefault(ctx, {})
+            chain[ctx][nxt] = chain[ctx].get(nxt, 0) + 1
+        return chain
+
     def get_letter_distances(self, text, max_context=6, lookahead=12):
         self.letter_distances = {}
+        self.letters = list(text)
         for i, char in enumerate(text):
             for ctx_len in range(1, max_context + 1):
                 if i < ctx_len:
@@ -167,26 +229,105 @@ class LetterGoblin(WordGoblin):
 
     #     return "".join(sentence)
 
-    def generate_random_sentence(self, starting_word="T", length=200, decay=0.5, max_tail=200):
+    def generate_random_sentence(self, starting_word="T", length=200, decay=0.5, max_tail=200, n_gram=3, mode="source"):
+        """Generate readable text using n-letter chain model with fallback to score_candidates."""
         out = list(starting_word)
+        if mode == "source":
+            chain = self.get_source_n_letter_chain(n_gram)
+        else:
+            chain = self.get_associated_n_letter_chain(starting_word, n_gram)
+
+
+        def sample_next(context):
+            """Sample next character given context string, with fallback."""
+            # Try full context first
+            if context in chain:
+                next_chars = chain[context]
+                chars = list(next_chars.keys())
+                weights = list(next_chars.values())
+                return random.choices(chars, weights=weights, k=1)[0]
+            # Fallback: try shorter contexts
+            for ctx_len in range(len(context) - 1, 0, -1):
+                short_ctx = context[-ctx_len:]
+                if short_ctx in chain:
+                    next_chars = chain[short_ctx]
+                    chars = list(next_chars.keys())
+                    weights = list(next_chars.values())
+                    return random.choices(chars, weights=weights, k=1)[0]
+            # Final fallback: use score_candidates if available
+            if self._sampling_cache:
+                last_char = context[-1] if context else ' '
+                per_dist = self._sampling_cache.get(last_char, {})
+                if per_dist:
+                    # Collect all candidates with scores
+                    candidates = []
+                    for d, (cs, ws) in per_dist.items():
+                        if d < 12:
+                            f = decay ** d
+                            total = sum(ws)
+                            for c, w in zip(cs, ws):
+                                candidates.append((c, f * (w / total)))
+                    if candidates:
+                        chars = [c for c, _ in candidates]
+                        weights = [w for _, w in candidates]
+                        return random.choices(chars, weights=weights, k=1)[0]
+            # Ultimate fallback: random letter
+            return random.choice('abcdefghijklmnopqrstuvwxyz ')
+
         for _ in range(length):
-            last_char = out[-1] if out else " "
-            nxt = self.sample_next_char(last_char, decay=decay)
+            ctx = ''.join(out[-n_gram:]) if len(out) >= n_gram else ''.join(out)
+            nxt = sample_next(ctx)
             if nxt is None:
                 break
             out.append(nxt)
-            if nxt in ".!?" and len(out) > 20:
+            if nxt in '.!?' and len(out) > 20:
                 break
+
         # bounded, weighted tail instead of uniform walk
         tail = 0
-        while tail < max_tail and (not out or out[-1] not in ".!?"):
-            last_char = out[-1] if out else " "
-            nxt = self.sample_next_char(last_char, decay=decay)
+        while tail < max_tail and (not out or out[-1] not in '.!?'):
+            ctx = ''.join(out[-n_gram:]) if len(out) >= n_gram else ''.join(out)
+            nxt = sample_next(ctx)
             if nxt is None:
                 break
             out.append(nxt)
             tail += 1
-        return "".join(out)
+        return ''.join(out)
+    def tween_word(self, word, n_gram=2, num_variants=10, replace_prob=0.5, temperature=2.0):
+        """Tween a word: replace letters with likely candidates from chain model.
+
+        Uses temperature sampling to add variety. Higher temperature = more random.
+        """
+        chain = self.get_source_n_letter_chain(n_gram)
+        variants = []
+
+        for _ in range(num_variants):
+            result = list(word)
+            for i in range(len(word)):
+                if i >= n_gram:
+                    ctx = word[i-n_gram:i]
+                elif i > 0:
+                    ctx = word[:i]
+                else:
+                    ctx = ''
+
+                if ctx and ctx in chain:
+                    candidates = chain[ctx]
+                    chars = list(candidates.keys())
+                    weights = list(candidates.values())
+
+                    # Apply temperature to add variety
+                    adjusted_weights = [w ** (1.0/temperature) for w in weights]
+                    total = sum(adjusted_weights)
+                    adjusted_weights = [w/total for w in adjusted_weights]
+
+                    if random.random() < replace_prob:
+                        result[i] = random.choices(chars, weights=adjusted_weights, k=1)[0]
+
+            variants.append(''.join(result))
+
+        return variants
+
 
     # def build_sampling_cache(self):
     #     self._sampling_cache = {}

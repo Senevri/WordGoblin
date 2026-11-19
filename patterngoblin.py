@@ -70,8 +70,10 @@ class PatternGoblin:
     """Recognize 'the X of Y' templates in text or goblin models."""
 
     def __init__(self):
-        # {(x_word, y_word, template): count}
-        self.patterns: Dict[Tuple[str, str, str], int] = {}
+        # {(x_clean, y_clean): count} for deduplication
+        self.patterns: Dict[Tuple[str, str], int] = {}
+        # {(x_clean, y_clean): template_string} preserves first occurrence's capitalization
+        self.template_strings: Dict[Tuple[str, str], str] = {}
         # ordered list of (start, end, x, y, full_match) for positional context
         self.raw_patterns: List[Tuple[int, int, str, str, str]] = []
 
@@ -94,6 +96,7 @@ class PatternGoblin:
             y_word = m.group(2)
 
             # Normalize: lowercase, strip markdown/formatting chars and punctuation
+            # Used for deduplication/counting only.
             def _clean(token: str) -> str:
                 t = token.lower().strip(string.punctuation)
                 return re.sub(r'[^a-z]', '', t)
@@ -105,9 +108,19 @@ class PatternGoblin:
             if len(x_clean) < _MIN_WORD_LEN or len(y_clean) < _MIN_WORD_LEN:
                 continue
 
-            template = f"the {x_clean} of {y_clean}"
-            key = (x_clean, y_clean, template)
+            # Strip trailing punctuation from y_word for the template string
+            # so 'war.' and 'war' count as the same template.
+            y_stripped = y_word.rstrip(string.punctuation)
+
+            # Preserve original capitalization in the template string.
+            # The cleaned version is used for deduplication so 'The Art of War' and
+            # 'the art of war' count as the same pattern.
+            template = f"the {x_raw} of {y_stripped}"
+            key = (x_clean, y_clean)
             self.patterns[key] = self.patterns.get(key, 0) + 1
+            # Store template string only on first occurrence (preserves first capitalization)
+            if key not in self.template_strings:
+                self.template_strings[key] = template
             self.raw_patterns.append(
                 (m.start(), m.end(), x_raw, y_word, template)
             )
@@ -149,11 +162,11 @@ class PatternGoblin:
         self, min_count: int = 1
     ) -> OrderedDict[str, int]:
         """Return unique templates sorted by frequency (desc), with optional filter."""
-        filtered = {
-            tpl: count
-            for (x, y, tpl), count in self.patterns.items()
-            if count >= min_count
-        }
+        filtered = OrderedDict()
+        for (x, y), count in self.patterns.items():
+            if count >= min_count:
+                tpl = self.template_strings.get((x, y), f"the {x} of {y}")
+                filtered[tpl] = count
         # Sort descending by count, then alphabetically for stability
         return OrderedDict(
             sorted(filtered.items(), key=lambda item: (-item[1], item[0]))

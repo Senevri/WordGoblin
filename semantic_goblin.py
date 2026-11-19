@@ -197,6 +197,18 @@ def _extract_after(sentence: str, m) -> Optional[ExtractedFact]:
     return ExtractedFact("after", earlier, "precedes", later, source_sentence=sentence)
 
 
+# --- 10b. Inverted Attribute: "How X Y is" -> "Y is X" ---
+_RE_INVERTED_ATTR = re.compile(
+    r"how\s+(?P<adj>\w+)\s+(?P<subject>\w+)\s+is(?:\.|$)",
+    re.IGNORECASE,
+)
+
+def _extract_inverted_attr(sentence: str, m) -> Optional[ExtractedFact]:
+    subj = _clean(m.group("subject"))
+    obj = _clean(m.group("adj"))
+    return ExtractedFact("attribute", subj, "has_property", obj, source_sentence=sentence)
+
+
 # --- 10. Attribute: "X is Y" (adjective) ---
 _RE_ATTR = re.compile(
     r"(?P<subject>\w[\w\s]*?)\s+is\s+(?P<object>\w+)(?:\.|$)",
@@ -210,6 +222,24 @@ def _extract_attr(sentence: str, m) -> Optional[ExtractedFact]:
     if obj[0].islower():
         return ExtractedFact("attribute", subj, "has_property", obj, source_sentence=sentence)
     return None
+
+
+
+# --- 11. Communication: "X talk/tell to Y about Z" ---
+_RE_COMMUNICATE = re.compile(
+    r'(?P<speaker>\w[\w\s]*?)\s+(talk|tell|explain|ask|mention)\s+(?:to\s+)?(?P<listener>\w[\w\s]*?)\s+(?:about\s+(?P<topic>\w[\w\s]*?))?(?:\.|$)',
+    re.IGNORECASE,
+)
+
+def _extract_communicate(sentence: str, m) -> Optional[ExtractedFact]:
+    speaker = _clean_preserve_case(m.group("speaker"))
+    listener = _clean_preserve_case(m.group("listener"))
+    topic = _clean(m.group("topic")) if m.group("topic") else ""
+    if topic:
+        return ExtractedFact("communicate", speaker, "communicates_with", listener,
+                           source_sentence=sentence)
+    return ExtractedFact("communicate", speaker, "communicates_with", listener,
+                       source_sentence=sentence)
 
 
 # --- 11. Action: "X verb the Y" with event type classification ---
@@ -281,7 +311,7 @@ _agent_words_pattern = "|".join(
 )
 _AGENT_PATTERN = r'(?:[A-Z]\w+|\b(?:' + _agent_words_pattern + r')\b)\w*'
 _RE_ACTION = re.compile(
-    r'(?P<agent>' + _AGENT_PATTERN + r')\b\s+(?P<action>\w+)\s+(?:the|a|an)?\s*(?P<patient>\w[\w\s]*?)(?:\.|$)',
+    r'(?P<agent>' + _AGENT_PATTERN + r')\b\s+(?P<action>\w+)\s+(?:(?:\b(?:the|a|an)\b)\s+)?(?P<patient>\w[\w\s]*?)(?:\.|$)',
 )
 
 def _extract_action(sentence: str, m) -> Optional[ExtractedFact]:
@@ -396,7 +426,8 @@ PATTERNS = [
     (_RE_COMPARATIVE, _extract_comparative),
     (_RE_SUPERLATIVE, _extract_superlative),
     (_RE_IF, _extract_if),
-    (_RE_ACTION, _extract_action),
+    (_RE_ACTION, _extract_action),z
+    (_RE_INVERTED_ATTR, _extract_inverted_attr),
     (_RE_ATTR, _extract_attr),
 ]
 
@@ -439,11 +470,18 @@ class SemanticGoblin:
     def _split_sentences(self, text: str) -> List[str]:
         # FIXME: Naive implementation. will happily split on abbreviations,
         # initials, decimal numbers, and punctuation inside quoted dialogue.
-        # It also discards the delimiters.
-        """Split text into sentences on '.', '!', '?'."""
+        """Split text into sentences on '.', '!', '?', preserving punctuation."""
         if not text.strip():
             return []
-        return [s.strip() for s in re.split(r"[.!?]+", text) if s.strip()]
+        # Use finditer to capture sentences with their trailing punctuation
+        matches = re.finditer(r'([^.!?]*[.!?]+)', text)
+        result = []
+        for m in matches:
+            sentence = m.group(1).strip()
+            if sentence:
+                result.append(sentence)
+        return result
+
 
     def _extract_from_sentence(self, sentence: str):
         """Try each pattern against a single sentence."""
