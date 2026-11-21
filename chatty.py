@@ -155,7 +155,7 @@ def big_nwx_test(wg, phrase, length=20, max_tail=20):
 
     return sequence
 
-def tweengoblin_magic(tweengoblin: TweenGoblin, out: list, annotate=False):
+def tweengoblin_magic(tweengoblin: TweenGoblin, out: list, annotate=False, max_inclusion=1):
 
     print (" --- Original ---", end="");print("-"*65)
     print(" ".join(out)) # print(out)
@@ -163,24 +163,24 @@ def tweengoblin_magic(tweengoblin: TweenGoblin, out: list, annotate=False):
     new_sentence = []
     no_insert = True
     inclusion_block=0
+    counter = 0
     for idx, word in enumerate(out):
         new_sentence.append(word)
         if idx >= len(out) - 1: break
         found = tweengoblin.tween_search(word, out[idx+1])
         foundstr = f"c={len(found)} w={found[0][1]}: {found[0][0]}" if found else ""
         # print(f"{word} [ {foundstr} ] {out[idx+1]}: ")
-        if found and no_insert:
+        if found and counter < max_inclusion:
             if annotate:
                 new_sentence.append(f"{found[0][0]}[{found[0][1]}]")
             else:
                 new_sentence.append(found[0][0])
-            no_insert = False
+            counter = 0
         else:
             if found:
                 inclusion_block += 1
-            no_insert = True
     out = new_sentence
-    return out
+    return out, inclusion_block
 
 def main():
     import argparse
@@ -223,7 +223,7 @@ def main():
         in_str = (" ".join(buffer) + " " + new_input)
         out = big_nwx_test(wordgoblin, in_str, length=num_words)
         # tweengoblin magic
-        out = tweengoblin_magic(out)
+        out, inclusion_block = tweengoblin_magic(tweengoblin, out, max_inclusion=4)
         # tweengoblin magic end
         buffer = out
         print(" ".join(buffer))

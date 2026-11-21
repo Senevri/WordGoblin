@@ -89,7 +89,7 @@ def build_goblins(directory, level="word"):
     return goblins
 
 
-def combine_goblins(goblins, level="word"):
+def combine_goblins(goblins, level="word", multiplier:float=1):
     """Sum the per-source distance maps into a single combined goblin."""
     goblin_cls, suffix, dist_attr = _load_goblin_class(level)
     combined = goblin_cls("")
@@ -107,7 +107,7 @@ def combine_goblins(goblins, level="word"):
             for word, associations in source.items():
                 bucket = combined_distances.setdefault(word, {})
                 for key, weight in associations.items():
-                    bucket[key] = bucket.get(key, 0) + weight
+                    bucket[key] = bucket.get(key, 0) + weight*multiplier
 
     combined.words = list(combined_distances.keys())
     combined.build_sampling_cache()
@@ -162,7 +162,7 @@ def _load_goblin_from_pickle(pickle_path, level="word"):
     return goblin
 
 
-def combine_pickles(pickle_paths, level="word", out="combined"):
+def combine_pickles(pickle_paths, level="word", out="combined", multiplier=1.0):
     """Combine two existing model pickles into a brand-new pickle.
 
     Nondestructive: the input pickles are only read, never modified, and the
@@ -187,7 +187,7 @@ def combine_pickles(pickle_paths, level="word", out="combined"):
         _resolve_pickle_path(p, level).stem: _load_goblin_from_pickle(p, level)
         for p in resolved
     }
-    combined = combine_goblins(goblins, level=level)
+    combined = combine_goblins(goblins, level=level, multiplier=multiplier)
     combined.save(out_path)
     print(f"Saved combined.{level} model to {out_path} "
           f"({len(combined.words)} entries)")
@@ -215,10 +215,18 @@ def main():
         help="Combine two existing model pickles into a new pickle "
              "(nondestructive; inputs are left untouched).",
     )
+
+    parser.add_argument("--multiplier", nargs=2, metavar=("MULT1", "MULT2"),
+                        help="multiply weights in the ratio given")
+
+
     args = parser.parse_args()
 
     if args.combine:
-        combine_pickles(args.combine, level=args.level, out=args.out)
+        if args.multiplier:
+            var1, var2 = args.multiplier
+            multi = float(var2) / float(var1)
+        combine_pickles(args.combine, level=args.level, out=args.out, multiplier=multi)
         return
 
     if not args.text_file:

@@ -15,7 +15,7 @@ def demo(text, pickle_path, n_gram=2, length=30, num_variants=5, temperature=2.0
     if pickle_path:
         lg.load(pickle_path)
     else:
-        lg._get_letter_distances(lg.text)
+        lg.get_letter_distances(lg.text)
     lg.build_sampling_cache()
 
     print('=' * 60)

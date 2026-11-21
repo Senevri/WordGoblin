@@ -12,7 +12,7 @@ class LetterGoblin(WordGoblin):
         self.letter_distances = {}
         self.letters = list(text_str)
         if not defer_load:
-            self.letter_distances = self._get_letter_distances(text_str)
+            self.letter_distances = self.get_letter_distances(text_str)
         self._sampling_cache = {}
 
     def save(self, path):
@@ -60,20 +60,20 @@ class LetterGoblin(WordGoblin):
         self.letters.append(letter)
 
 
-    def _get_letter_distances(self, text):
-        i = 0
-        max_distance = 12
-        while text:
-            letter = text[0]
-            #idx_last = max_distance - abs(len(words)-max_distance)
-            #print(idx_last)
-            window = text[1:max_distance + 1]
-            self.get_segment(letter, window)
-            text = text[1:]
-            i += 1
-            # self.letter_distances[word] = sorted(self.letter_distances[word], key=lambda x: x[0])
-            print(f"{i}/{len(text)}", end="\r")
-        return self.letter_distances
+    # def _get_letter_distances(self, text):
+    #     i = 0
+    #     max_distance = 12
+    #     while text:
+    #         letter = text[0]
+    #         #idx_last = max_distance - abs(len(words)-max_distance)
+    #         #print(idx_last)
+    #         window = text[1:max_distance + 1]
+    #         self.get_segment(letter, window)
+    #         text = text[1:]
+    #         i += 1
+    #         # self.letter_distances[word] = sorted(self.letter_distances[word], key=lambda x: x[0])
+    #         print(f"{i}/{len(text)}", end="\r")
+    #     return self.letter_distances
 
 
     def combine_distances(self):

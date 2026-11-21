@@ -54,7 +54,7 @@ class IdiomGoblin:
             match = pattern.search(text)
             if match:
                 matches.append((pattern_name, match.start(), match.end()))
-        
+
         if matches:
             # Select the match with the earliest start position (longest match first)
             best_match = max(matches, key=lambda x: x[2] - x[1])
@@ -82,19 +82,19 @@ class IdiomGoblin:
 if __name__ == "__main__":
     idiom_goblin = IdiomGoblin()
     idiom_goblin.train("idioms.md")
-    
+
     # Add optional idioms
     idiom_goblin.add_optional_idiom("hit the", ["hay", "sack"])
-    
+
     # Test preprocessing
     test_text = "He kicked the bucket last year."
     result = idiom_goblin.preprocess_text(test_text)
     print(result)
-    
+
     test_text_2 = "She hit the hay early."
     result_2 = idiom_goblin.preprocess_text(test_text_2)
     print(result_2)
-    
+
     test_text_3 = "They hit the sack after the party."
     result_3 = idiom_goblin.preprocess_text(test_text_3)
     print(result_3)

@@ -426,7 +426,7 @@ PATTERNS = [
     (_RE_COMPARATIVE, _extract_comparative),
     (_RE_SUPERLATIVE, _extract_superlative),
     (_RE_IF, _extract_if),
-    (_RE_ACTION, _extract_action),z
+    (_RE_ACTION, _extract_action),
     (_RE_INVERTED_ATTR, _extract_inverted_attr),
     (_RE_ATTR, _extract_attr),
 ]
