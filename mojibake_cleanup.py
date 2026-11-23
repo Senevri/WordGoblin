@@ -20,9 +20,9 @@ MOJIBAKE_MAP = {
     chr(0x200b): '',       # ZERO WIDTH SPACE -> remove
     chr(0xfeff): '',       # ZERO WIDTH NO-BREAK SPACE (BOM) -> remove
     # Currency
-    chr(0x00a3): 'GBP',    # POUND SIGN
-    chr(0x20ac): 'EUR',    # EURO SIGN
-    chr(0x00a5): 'YEN',    # YEN SIGN
+    chr(0x00a3): ' GBP ',    # POUND SIGN
+    chr(0x20ac): ' EUR ',    # EURO SIGN
+    chr(0x00a5): ' YEN ',    # YEN SIGN
     chr(0x00a2): 'c',      # CENT SIGN
     # Math/symbols
     chr(0x00d7): '*',      # MULTIPLICATION SIGN
@@ -32,7 +32,7 @@ MOJIBAKE_MAP = {
     chr(0x00b3): '3',      # SUPERSCRIPT THREE
     chr(0x00b9): '1',      # SUPERSCRIPT ONE
     chr(0x00bc): '1/4',    # VULGAR FRACTION ONE QUARTER
-    chr(0x00bd): '1/2',    # VULGAR FRACTION ONE HALF
+    chr(0x00bd): '½',    # VULGAR FRACTION ONE HALF
     chr(0x00be): '3/4',    # VULGAR FRACTION THREE QUARTERS
     chr(0x2153): '1/3',    # VULGAR FRACTION ONE THIRD
     chr(0x2154): '2/3',    # VULGAR FRACTION TWO THIRDS
