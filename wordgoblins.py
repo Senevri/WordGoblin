@@ -4,14 +4,21 @@ import asyncio
 import random
 from timeit import default_timer as timer
 import threading
+from pathlib import Path
 
 class WordGoblin():
 
     def __init__(self, text_str):
         self.word_distances = {}
+        self.corpus = text_str
         self.words = self.get_words(text_str)
         self.word_distances:dict = self.get_word_distances(self.words)
         self._sampling_cache = {}
+        #self.cache={}
+
+    def tokenize(self):
+        self.words = self.get_words(self.corpus)
+        self.word_distances = self.get_word_distances(self.words)
 
     def get_words(self, text):
         whitespace = [" ", "\t", "\n", "\r"]
@@ -23,9 +30,12 @@ class WordGoblin():
         return words
 
 
-    def save(self, path):
+    def save(self, path, cache=False):
         with open(path, "wb") as f:
             pickle.dump((self.word_distances, self.words), f)
+        if cache:
+            with open(str(path).removesuffix(".pickle")+".scache.pickle", "wb"):
+                pickle.dump(self._sampling_cache)
 
     def load(self, path):
         with open(path, "rb") as f:
@@ -140,7 +150,28 @@ class WordGoblin():
                 else:
                     yield other_word
 
-    def generate_random_sentence(self, starting_word="the", length=16):
+    def get_model_data(self):
+        return (self.word_distances, self.words)
+
+    def load_model_data(self, data):
+        if isinstance(data, tuple) and len(data) == 2 and isinstance(data[0], dict):
+            self.word_distances = data[0]
+            self.words = data[1] or list(data[0])
+        else:
+            self.word_distances = data
+            self.words = list(data)
+
+    def combine_with(self, other, multiplier=1.0):
+        if not self.word_distances:
+            self.word_distances = {w: dict(a) for w, a in other.word_distances.items()}
+        else:
+            for word, assoc in other.word_distances.items():
+                bucket = self.word_distances.setdefault(word, {})
+                for key, weight in assoc.items():
+                    bucket[key] = bucket.get(key, 0) + weight * multiplier
+        self.words = list(self.word_distances.keys())
+
+    def generate_random_sentence(self, starting_word="the", length=16, sep=" "):
         sentence = [starting_word]
         word = starting_word
 
@@ -163,8 +194,7 @@ class WordGoblin():
             sentence.append(word)
             if len(sentence) > length * 4:
                 break
-
-        return " ".join(sentence)
+        return sep.join(sentence)
 
     def build_sampling_cache(self):
         self._sampling_cache = {}
@@ -350,32 +380,59 @@ def main(path):
             if file.suffix in [".txt", ".md"]:
                 args.text_file = file
                 picklefile = pathlib.Path(args.text_file).with_suffix(".pickle")
-                if picklefile.is_file():
+                #if picklefile.is_file():
                     # text = ""
                     # wg = WordGoblin("")
                     # wg.load(picklefile)
                     # wg.build_sampling_cache()
-                    pass
-                else:
-                    with open(args.text_file) as f:
-                        text = f.read()
-                    wg = WordGoblin(text)
-                    wg.save(picklefile)
+                #    pass
+                #else:
+                print("Reading file...")
+                start = timer()
+                with open(args.text_file) as f:
+                    text = f.read()
+                wg = WordGoblin(text)
+                #wg.save(picklefile)
+                stop = timer()
+                print(f"Time taken: {stop - start}")
+                g = wg
+                print("Words:", sys.getsizeof(g.words))
+    else:
+        if not path.exists():
+            exit(1)
+        print("Reading file...")
+        start = timer()
+        with open(path) as f:
+            text = f.read()
+        wg = WordGoblin(text)
+        wg.build_sampling_cache()
+        #wg.save(picklefile)
+        stop = timer()
+        print(f"Time taken: {stop - start}")
+        g = wg
+        print(f"\t{wg.generate_random_sentence("The", length=32)}")
+        print("Words:", sys.getsizeof(g.words))
+        return(0)
+
     # wg = test_three()
     # test_four(wg)
 
     start = timer()
     wg = WordGoblin("")
-    wg.load("combined.pickle")
-    wg.build_sampling_cache()
-    words = [w for w in wg.unique_words if w and (w[0].isupper() or w.startswith("..."))]
-    for i in range(30):
-        word = random.choice(words)
-        print (f"Word: {word}:")
-        for j in range(3):
-            print(f"\t{wg.generate_random_sentence(word, length=32)}")
+    if Path("combined.pickle").exists():
+        wg.load("combined.pickle")
+        wg.build_sampling_cache()
+        words = [w for w in wg.unique_words if w and (w[0].isupper() or w.startswith("..."))]
+        for i in range(30):
+            word = random.choice(words)
+            print (f"Word: {word}:")
+            for j in range(3):
+                print(f"\t{wg.generate_random_sentence(word, length=32)}")
     stop = timer()
     print(f"Time taken: {stop - start}")
+    g = wg
+    print(f"\t{wg.generate_random_sentence("The", length=32)}")
+    print("Words:", sys.getsizeof(g.words))
 
 
 if __name__ == "__main__":

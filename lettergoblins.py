@@ -10,39 +10,62 @@ class LetterGoblin(WordGoblin):
 
     def __init__(self, text_str, defer_load=False):
         self.letter_distances = {}
-        self.letters = list(text_str)
+        self.corpus = text_str.encode("utf-8")
         if not defer_load:
             self.letter_distances = self.get_letter_distances(text_str)
         self._sampling_cache = {}
 
     def save(self, path):
         with open(path, "wb") as f:
-            pickle.dump(self.letter_distances, f)
+            pickle.dump((self.corpus, self.letter_distances), f)
+
+    @property
+    def letters(self):
+        return list(self.corpus)
 
     @property
     def unique_letters(self):
         return list(self.letter_distances.keys())
 
-    def load(self, path):
-        with open(path, "rb") as f:
-            data = pickle.load(f)
+    def reset(self):
+        self.corpus = b""
         self.letter_distances = {}
-        for word, associations in data.items():
-            if isinstance(associations, dict):
-                # Already using the new representation
-                self.letter_distances[word] = associations
-            else:
-                # Convert old list representation
-                converted = {}
 
-                for other_word, distance in associations:
-                    key = (other_word, distance)
-                    converted[key] = converted.get(key, 0) + 1
+    def add_corpus(self, corpus: str | bytes):
+        if isinstance(corpus, str):
+            corpus = corpus.encode("utf-8")
+        self.corpus += corpus
 
-                self.letter_distances[word] = converted
+    def load(self, paths):
+        if not isinstance(paths, list):
+            paths = [paths]
+        for path in paths:
+            with open(path, "rb") as f:
+                data = pickle.load(f)
+            corpus = None
+            if isinstance(data, tuple):
+                corpus, data = data
+            for word, associations in data.items():
+                if isinstance(associations, dict):
+                    # Already using the new representation
+                    old_assoc = self.letter_distances.get(word, (word[0], 0))
+                    self.letter_distances[word] = old_assoc[1] + associations[1]
 
-        if not self.letters:
-            self.letters = list(self.letter_distances.keys())
+                else:
+                    # Convert old list representation
+                    converted = {}
+
+                    for other_word, distance in associations:
+                        key = (other_word, distance)
+                        converted[key] = converted.get(key, 0) + 1
+
+                    self.letter_distances[word] = converted
+
+            if corpus:
+                self.corpus += corpus
+            if not self.corpus:
+                self.corpus = " ".join(self.letter_distances.keys()).encode("utf-8")
+
 
     def get_segment(self, letter, window):
         if letter not in self.letter_distances:
@@ -129,6 +152,27 @@ class LetterGoblin(WordGoblin):
                 else:
                     yield other_word
 
+    def get_model_data(self):
+        return (self.word_distances, self.words)
+
+    def load_model_data(self, data):
+        if isinstance(data, tuple) and len(data) == 2 and isinstance(data[0], dict):
+            self.word_distances = data[0]
+            self.words = data[1] or list(data[0])
+        else:
+            self.word_distances = data
+            self.words = list(data)
+
+    def combine_with(self, other, multiplier=1.0):
+        if not self.word_distances:
+            self.word_distances = {w: dict(a) for w, a in other.word_distances.items()}
+        else:
+            for word, assoc in other.word_distances.items():
+                bucket = self.word_distances.setdefault(word, {})
+                for key, weight in assoc.items():
+                    bucket[key] = bucket.get(key, 0) + weight * multiplier
+        self.words = list(self.word_distances.keys())
+
     def get_associated_n_letter_chain(self, context: str, n: int) -> dict:
         self.chains = {}
         if self.chains.get((context, n)):
@@ -174,8 +218,6 @@ class LetterGoblin(WordGoblin):
         return chain
 
     def get_letter_distances(self, text, max_context=6, lookahead=12):
-        self.letter_distances = {}
-        self.letters = list(text)
         for i, char in enumerate(text):
             for ctx_len in range(1, max_context + 1):
                 if i < ctx_len:

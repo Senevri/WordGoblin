@@ -17,6 +17,27 @@ class TestPatternGoblin(unittest.TestCase):
         self.assertEqual(templates["the art of war"], 1)
         print("[PASS] test_template_recognition: Standard templates are recognized")
 
+    def test_template_preserves_capitalization(self):
+        """Test that original capitalization is preserved in templates."""
+        g = PatternGoblin()
+        # Use text where first occurrence is NOT a relation clause
+        g.feed("The Art of War influenced history. The art of war was influential.")
+        templates = g.get_templates()
+        # Both should count together (deduplication via cleaned form)
+        # But the template string should preserve the first occurrence's capitalization
+        self.assertEqual(templates["the Art of War"], 2)
+        print("[PASS] test_template_preserves_capitalization: Capitalization is preserved")
+
+    def test_template_preserves_punctuation(self):
+        """Test that trailing punctuation on Y is stripped from template."""
+        g = PatternGoblin()
+        g.feed("The state of the art. The state of the art!")
+        templates = g.get_templates()
+        # Trailing punctuation on Y should be stripped so both count together
+        self.assertIn("the state of the", templates)
+        self.assertEqual(templates["the state of the"], 2)
+        print("[PASS] test_template_preserves_punctuation: Trailing punctuation is stripped")
+
     def test_no_relation_duplication(self):
         """
         Test that relation clauses are NOT matched as templates.

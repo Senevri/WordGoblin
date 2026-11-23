@@ -8,63 +8,111 @@ import contextlib
 from wordgoblins import WordGoblin
 
 
+
 def _load_goblin_class(level):
     if level == "letter":
         from lettergoblins import LetterGoblin
-        return LetterGoblin, ".letterpickle", "letter_distances"
-    return WordGoblin, ".pickle", "word_distances"
-
-
-def _make_goblin(goblin_cls, dist_attr, distances, cache):
-    """Reconstruct a goblin instance from stored distances + cache."""
-    goblin = goblin_cls("")
-    setattr(goblin, dist_attr, distances)
-    goblin._sampling_cache = cache
-    goblin.words = list(distances)
-    return goblin
+        return LetterGoblin, ".letterpickle", "letter_distances", False
+    if level == "bin":
+        from nmgramgoblins import NMGramGoblin
+        return NMGramGoblin, ".bin.pickle", "token_map", True   # True = binary format
+    from wordgoblins import WordGoblin
+    return WordGoblin, ".pickle", "word_distances", False
 
 
 def build_goblin(path, level="word"):
-    path = Path(path)
-    text = path.read_text(encoding="utf-8")
-
-    goblin_cls, suffix, dist_attr = _load_goblin_class(level)
-    # The per-word progress print happens during construction
-    # (get_word_distances) and during cache building, so wrap both.
+    text = Path(path).read_text(encoding="utf-8")
+    goblin_cls, suffix, _ = _load_goblin_class(level)
     with contextlib.redirect_stdout(io.StringIO()):
         goblin = goblin_cls(text)
+        goblin.tokenize()
         goblin.build_sampling_cache()
     goblin.save(path.with_suffix(suffix))
-
-    distances = getattr(goblin, dist_attr)
-    return path.stem, distances, goblin.sampling_cache
-
+    return path.stem, goblin
 
 def load_goblin(path, level="word"):
-    """Load a goblin from an existing pickle (fast path)."""
     path = Path(path)
-    goblin_cls, suffix, dist_attr = _load_goblin_class(level)
+    goblin_cls, suffix = _load_goblin_class(level)
     pickle_path = path.with_suffix(suffix)
     with open(pickle_path, "rb") as f:
         data = pickle.load(f)
-    # New format stores (distances, words); old format stored only distances.
-    if isinstance(data, tuple) and len(data) == 2 and isinstance(data[0], dict):
-        distances = data[0]
-    else:
-        distances = data
     goblin = goblin_cls("")
-    setattr(goblin, dist_attr, distances)
-    goblin.words = list(distances)
+    goblin.load_model_data(data)
     goblin.build_sampling_cache()
-    return path.stem, distances, goblin.sampling_cache
+    return path.stem, goblin
+
+def combine_goblins(goblins, level="word", multiplier=1.0):
+    goblin_cls, _, _ = _load_goblin_class(level)
+    combined = goblin_cls("")
+    first = True
+    for goblin in goblins.values():
+        if first:
+            # seed combined from first goblin's data
+            combined.load_model_data(goblin.get_model_data())
+            first = False
+        else:
+            combined.combine_with(goblin, multiplier)
+    combined.build_sampling_cache()
+    return combined
+
+
+def _make_goblin(goblin_cls, dist_attr, distances, cache, is_binary=False):
+    goblin = goblin_cls("")
+    if is_binary:
+        # distances is (token_map, token_dict) — need both
+        token_map, token_dict = distances
+        goblin.token_map = token_map
+        goblin.token_dict = token_dict
+        goblin.words = list(token_map.keys())
+    else:
+        setattr(goblin, dist_attr, distances)
+        goblin.words = list(distances)
+    goblin._sampling_cache = cache
+    return goblin
+
+
+# def build_goblin(path, level="word"):
+#     path = Path(path)
+#     text = path.read_text(encoding="utf-8")
+
+#     goblin_cls, suffix, dist_attr = _load_goblin_class(level)
+#     # The per-word progress print happens during construction
+#     # (get_word_distances) and during cache building, so wrap both.
+#     with contextlib.redirect_stdout(io.StringIO()):
+#         goblin = goblin_cls(text)
+#         goblin.build_sampling_cache()
+#     goblin.save(path.with_suffix(suffix))
+
+#     distances = getattr(goblin, dist_attr)
+#     return path.stem, distances, goblin.sampling_cache
+
+
+# def load_goblin(path, level="word"):
+#     """Load a goblin from an existing pickle (fast path)."""
+#     path = Path(path)
+#     goblin_cls, suffix, dist_attr = _load_goblin_class(level)
+#     pickle_path = path.with_suffix(suffix)
+#     with open(pickle_path, "rb") as f:
+#         data = pickle.load(f)
+#     # New format stores (distances, words); old format stored only distances.
+#     if isinstance(data, tuple) and len(data) == 2 and isinstance(data[0], dict):
+#         distances = data[0]
+#     else:
+#         distances = data
+#     goblin = goblin_cls("")
+#     setattr(goblin, dist_attr, distances)
+#     goblin.words = list(distances)
+#     goblin.build_sampling_cache()
+#     return path.stem, distances, goblin.sampling_cache
 
 
 def _worker(path, level):
-    goblin_cls, suffix, dist_attr = _load_goblin_class(level)
+    goblin_cls, suffix, _ = _load_goblin_class(level)
     pickle_path = path.with_suffix(suffix)
     if pickle_path.is_file():
-        return load_goblin(path, level)
-    return build_goblin(path, level)
+        return path.stem, pickle_path   # already built
+    build_goblin(path, level)            # saves to disk
+    return path.stem, pickle_path
 
 
 def build_goblins(directory, level="word"):
@@ -78,16 +126,19 @@ def build_goblins(directory, level="word"):
 
     goblins = {}
     with ProcessPoolExecutor() as pool:
-        for name, distances, cache in pool.map(
-            _worker, paths, [level] * len(paths)
-        ):
-            goblin_cls, suffix, dist_attr = _load_goblin_class(level)
-            goblins[name] = _make_goblin(
-                goblin_cls, dist_attr, distances, cache
-            )
-
+        for name, pickle_path in pool.map(_worker, paths, [level]*len(paths)):
+            goblins[name] = load_goblin(pickle_path, level)   # load in parent
     return goblins
 
+    # goblins = {}
+    # with ProcessPoolExecutor() as pool:
+    #     for name, distances, cache in pool.map(
+    #         _worker, paths, [level] * len(paths)
+    #     ):
+    #         goblin_cls, suffix, dist_attr = _load_goblin_class(level)
+    #         goblins[name] = _make_goblin(
+    #             goblin_cls, dist_attr, distances, cache
+    #         )
 
 def combine_goblins(goblins, level="word", multiplier:float=1):
     """Sum the per-source distance maps into a single combined goblin."""
@@ -109,9 +160,29 @@ def combine_goblins(goblins, level="word", multiplier:float=1):
                 for key, weight in associations.items():
                     bucket[key] = bucket.get(key, 0) + weight*multiplier
 
-    combined.words = list(combined_distances.keys())
-    combined.build_sampling_cache()
-    return combined
+# def combine_goblins(goblins, level="word", multiplier:float=1):
+#     """Sum the per-source distance maps into a single combined goblin."""
+#     goblin_cls, suffix, dist_attr = _load_goblin_class(level)
+#     combined = goblin_cls("")
+
+#     first = True
+#     for goblin in goblins.values():
+#         source = getattr(goblin, dist_attr)
+#         if first:
+#             combined_distances = {
+#                 word: dict(assoc) for word, assoc in source.items()
+#             }
+#             combined.__setattr__(dist_attr, combined_distances)
+#             first = False
+#         else:
+#             for word, associations in source.items():
+#                 bucket = combined_distances.setdefault(word, {})
+#                 for key, weight in associations.items():
+#                     bucket[key] = bucket.get(key, 0) + weight*multiplier
+
+#     combined.words = list(combined_distances.keys())
+#     combined.build_sampling_cache()
+#     return combined
 
 
 def build_combined(directory, level="word", out="combined"):
@@ -203,7 +274,7 @@ def main():
         help="The text file or directory to read",
     )
     parser.add_argument(
-        "--level", choices=["word", "letter"], default="word",
+        "--level", choices=["word", "letter", "bin"], default="word",
         help="Model level to build (default: word)",
     )
     parser.add_argument(
