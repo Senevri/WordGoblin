@@ -10,21 +10,26 @@ from time import time
 from timeit import default_timer as timer
 from collections import Counter
 from array import array # Benchmark current ver first!
-
+import logging
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 
 ALL_SPECIAL_TOKENS = SPECIAL_TOKENS.all()
 
 class NMGramGoblin(WordGoblin):
 
     def __init__(self, text_str, n_len=2, m_len = 2, max_token_len=2):
+        super().__init__("")
         text_str = clean_mojibake(text_str)
-        self.corpus = text_str
+
+        #logger.debug("! %s", text_str)
+        self.corpus = str(text_str) # ensure copy
         self.n_len = n_len
         self.m_len = m_len
         # self.words = []
         self.words = array("I") # AGAIN first benchmark.
         self.max_token_len=max_token_len
-        super().__init__("")
+
         self.token_dict = TokenDictionary()
         for token in SPECIAL_TOKENS.all():
             self.token_dict.add(token.encode("utf-8"))
@@ -32,7 +37,7 @@ class NMGramGoblin(WordGoblin):
         self.cache={
             "siblings":{}
         }
-        self.tokenize()
+        #self.tokenize()
 
     def get_counts(self, recount=False):
         if "wordcounts" in self.cache and not recount:
@@ -50,14 +55,7 @@ class NMGramGoblin(WordGoblin):
         self.corpus = clean_mojibake(text_str)
 
     def save(self, path, cache=False):
-        data = {
-            "corpus": self.corpus,
-            "words": self.words,
-            "n_len": self.n_len,
-            "m_len": self.m_len,
-            "token_dict": self.token_dict,
-            "token_map": self.token_map,
-        }
+        data = self.get_model_data()
 
         with Path(path).open("wb") as f:
             pickle.dump(data, f, protocol=pickle.HIGHEST_PROTOCOL)
@@ -74,12 +72,7 @@ class NMGramGoblin(WordGoblin):
     def load(self, path, cache=False):
         with Path(path).open("rb") as f:
             data = pickle.load(f)
-        self.words = data["words"]
-        self.corpus = data["corpus"]
-        self.n_len = data["n_len"]
-        self.m_len = data["m_len"]
-        self.token_dict = data["token_dict"]
-        self.token_map = data["token_map"]
+        self.load_model_data(data)
         if cache:
             cachepath = str(path).removesuffix(".pickle")+".cache.pickle"
             if Path(cachepath).exists():
@@ -262,14 +255,23 @@ class NMGramGoblin(WordGoblin):
         return buffer
 
     def get_model_data(self):
-        return (self.token_map, self.token_dict)
+        return {
+            "corpus": self.corpus,
+            "words": self.words,
+            "n_len": self.n_len,
+            "m_len": self.m_len,
+            "token_dict": self.token_dict,
+            "token_map": self.token_map,
+        }
 
     def load_model_data(self, data):
         # data = (token_map, token_dict)
-        self.token_map, self.token_dict = data
-        # words is the full token sequence; if you didn't persist it,
-        # reconstruct from token_map keys (loses order but works for sampling)
-        self.words = list(self.token_map.keys())
+        self.words = data["words"]
+        self.corpus = data["corpus"]
+        self.n_len = data["n_len"]
+        self.m_len = data["m_len"]
+        self.token_dict = data["token_dict"]
+        self.token_map = data["token_map"]
 
     def combine_with(self, other, multiplier=1.0):
         """Merge other's transitions into self.
@@ -279,6 +281,10 @@ class NMGramGoblin(WordGoblin):
         sum weights for matching (dist, target) pairs.
         """
         # Build id mapping: other_id -> unified id in self.token_dict
+        other_data = other.get_model_data()
+        self.words += array("I", other_data["words"])
+        self.corpus += other_data["corpus"]
+
         id_map = {}
         for token_bytes, other_id in other.token_dict.items():
             id_map[other_id] = self.token_dict.add(token_bytes)
