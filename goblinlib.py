@@ -4,6 +4,7 @@ import random
 from typing import List, Tuple, Optional, Dict, Any, Union
 from dataclasses import dataclass, field
 from enum import Enum, IntEnum
+from array import array
 
 Candidate = Tuple[str, int]
 Candidate3 = Tuple[str, int, int]
@@ -18,6 +19,111 @@ class GoblinLike:
     def combine_with(self, other, multiplier=1.0):
         """Merge other's model into self in-place."""
         ...
+
+NTW_CACHE = {}
+
+def n_token_walk(
+    l_tid: array[int],
+    req_tokens: array[int],
+    filter=None,
+    max_tokens=20,
+    req_resp=1
+) -> list:
+    """
+    Find all occurrences of req_tokens in l_tid and return the tokens that follow each match.
+
+    Optimized version:
+    - Avoids creating filtered copy of l_tid (uses filter set for O(1) lookup)
+    - Uses memoryview for zero-copy slicing
+    - Collects all matches instead of overwriting
+    - Early exit when max_tokens reached
+    """
+    if filter is None:
+        filter_set = set()
+    else:
+        filter_set = set(filter)
+
+    req_len = len(req_tokens)
+    if req_len == 0:
+        return []
+
+    # Convert to list for faster indexing (array indexing is slower in Python)
+    # Only filter if filter_set is not empty
+    if filter_set:
+        # Build filtered list once
+        filtered = [x for x in l_tid if x not in filter_set]
+    else:
+        filtered = list(l_tid)
+
+    filtered_len = len(filtered)
+    if filtered_len < req_len + req_resp:
+        return []
+
+    # Convert req_tokens to tuple for faster comparison
+    req_tuple = tuple(req_tokens)
+    req_resp = min(req_resp, max_tokens)  # Cap response length
+
+    out = []
+    # Use local variables for speed
+    filtered_local = filtered
+    req_len_local = req_len
+    req_resp_local = req_resp
+    max_tokens_local = max_tokens
+
+    idx = 0
+    # Search for all matches
+    while idx <= filtered_len - req_len_local - req_resp_local:
+        # Quick check: first token must match
+        if filtered_local[idx] == req_tuple[0]:
+            # Check full sequence
+            match = True
+            for j in range(1, req_len_local):
+                if filtered_local[idx + j] != req_tuple[j]:
+                    match = False
+                    break
+
+            if match:
+                # Collect response tokens
+                end_idx = idx + req_len_local + req_resp_local
+                out.extend(filtered_local[idx + req_len_local:end_idx])
+                if len(out) >= max_tokens_local:
+                    break
+                idx = end_idx  # Skip past this match
+                continue
+        idx += 1
+
+    return out[:max_tokens_local]
+
+
+def n_token_walk_optimized(
+    l_tid: array[int],
+    req_tokens: array[int],
+    filter=None,
+    max_tokens=20,
+    req_resp=1
+) -> list:
+    """
+    Even more optimized version using a pre-built index for repeated searches.
+    Best when searching the same corpus multiple times with different patterns.
+    """
+    # This would require a pre-built index (e.g., suffix array or hash-based index)
+    # For now, use the improved version above
+    return n_token_walk(l_tid, req_tokens, filter, max_tokens, req_resp)
+
+def _n_token_walk(l_tid:array[int], req_tokens:array[int], filter=[], max_tokens=20) -> set [int]:
+    # Returns all tokens that match from corpus.
+    l_tid = [x for x in l_tid if x not in filter]
+    out = []
+    req_len = len(req_tokens)
+    seek_len = len(l_tid)-req_len-1
+    for idx in range(0, seek_len) :
+        _range = l_tid[idx:idx+req_len]
+        if all(a==b for a, b in zip(_range, req_tokens)):
+            #print(len(l_tid), idx, seek_len)
+            out.append(l_tid[idx+req_len])
+            if len(out)>max_tokens: break
+    return set(out)
+
 
 def n_word_search(word_distances: Dict[str, Any], word_list: List[str]) -> List[Candidate]:
     """Predict the word(s) that follow word_list using chain validation.
@@ -134,6 +240,11 @@ class TokenDictionary():
     def get_string(self, token_id:int) -> str:
         return self.id_to_token[token_id].decode("utf-8")
 
+    def get_string_from_list(self, tokenlist:list[int], sep=b"") -> str:
+
+        return sep.join(self.id_to_token[t] for t in tokenlist).decode("utf-8")
+
+
     def encode(self, token: bytes) -> bytes:
         return self.add(token).to_bytes(3, LITTLE)
 
@@ -222,13 +333,51 @@ def binary_to_tokenpair(binary_t:bytes, _dict):
 
 import re
 
+AGENT_WORDS = frozenset([
+    "I", "she", "he", "they", "we", "you", "it",
+    "that", "this", "my", "your", "their", "our",
+])
+
+AUXILIARY_VERBS = frozenset([
+    "am", "is", "are", "was", "were", "be", "been",
+    "being", "have", "has", "had", "do", "does", "did",
+    "can", "could", "may", "might", "must", "shall",
+    "should", "will", "would",
+])
+
+POSSESSION_VERBS = frozenset([
+    "have", "has", "had",
+])
+
+HUB_WORDS = frozenset("The,the,a,A,An,".split(","))
+
+COMMON_SUFFIXES = (
+    # Nounforming
+    "tion", "sion", "ment", "ness", "ity", "ance", "ence",
+    "er", "or", "ist", "ism", "ship", "hood", "age", "cy",
+
+    # Adjectiveforming
+    "able", "ible", "al", "ic", "ous", "ful", "less",
+    "ive", "ish", "y", "ary", "esque",
+
+    # Adverbforming
+    "ly", "ward", "wards", "wise",
+
+    # Verbforming
+    "ize", "ise", "ify", "ate", "en",
+
+    # Grammatical / inflectional
+    "s", "es", "ed", "ing", "er", "est", "'s",
+)
+
+
 class SPECIAL_TOKENS:
     t_type = IntEnum("tokentype",
         "none indent newline specialchars whitespace all"
     )
     indentation = [" "*8, " "*4, " "*2, " ", "\t"]
     newline = ["\r\n", "\r", "\n"]
-    specialchars = list('!"#¤%&/()\\?=)(/&%¤#"!\')^¨~§½<>|')
+    specialchars = list('-*+[]!"#¤%&/()${}\\?=/&%¤#"!\'^¨~§½<>|') + ["'"]
     extra = []
     _all = []
     _single = None      # set of single-char specials

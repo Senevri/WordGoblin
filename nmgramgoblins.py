@@ -1,7 +1,20 @@
 import sys
 
 from wordgoblins import WordGoblin
-from goblinlib import SPECIAL_TOKENS, TokenDictionary, tokenpair_to_binary, token_to_binary, binary_to_token
+from goblinlib import (
+    SPECIAL_TOKENS,
+    TokenDictionary,
+    tokenpair_to_binary,
+    token_to_binary,
+    binary_to_token,
+    n_token_walk,
+    AGENT_WORDS,
+    AUXILIARY_VERBS,
+    POSSESSION_VERBS,
+    COMMON_SUFFIXES
+
+
+)
 from mojibake_cleanup import clean_mojibake
 import pickle
 from pathlib import Path
@@ -14,7 +27,16 @@ import logging
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
-ALL_SPECIAL_TOKENS = SPECIAL_TOKENS.all()
+def flatten(xss):
+    return [x for xs in xss for x in xs]
+
+ALL_SPECIAL_TOKENS = frozenset(sorted(flatten([
+    SPECIAL_TOKENS.all(),
+    list(AGENT_WORDS),
+    list(AUXILIARY_VERBS),
+    list(POSSESSION_VERBS),
+    COMMON_SUFFIXES,
+    ]), key=lambda x: len(x), reverse=True))
 
 class NMGramGoblin(WordGoblin):
 
@@ -31,7 +53,7 @@ class NMGramGoblin(WordGoblin):
         self.max_token_len=int(max_token_len)
 
         self.token_dict = TokenDictionary()
-        for token in SPECIAL_TOKENS.all():
+        for token in ALL_SPECIAL_TOKENS:
             self.token_dict.add(token.encode("utf-8"))
         self.token_map = {} #key:bytearray
         self.cache={
@@ -93,6 +115,7 @@ class NMGramGoblin(WordGoblin):
                     (k[0], SPECIAL_TOKENS.t_type((k[1]))): array("I", v) for k, v in self.cache.pop("siblings", {}).items()
                 }
                 self.cache.setdefault("cache_hits", {})
+
 
 
 
@@ -458,16 +481,13 @@ if __name__=="__main__":
     first_run_cache_hits = 0
     td = g.token_dict
 
-    hub_words = [w for w in "The,the,a,A,An,".split(",") if td.find_by_str(w)]
-    print (hub_words)
-    exit()
+    # hub_words = [w for w in "The,the,a,A,An,".split(",") if td.lookup(w.encode("utf-8"))]
+    # print (hub_words)
+    # g._filtered_words(SPECIAL_TOKENS.all() + hub_words)
 
     if args.siblings:
         start = timer()
         start1 = float(start)
-
-        g._filtered_words(SPECIAL_TOKENS.all() + hub_words)
-
 
         try:
             for _, word in g.token_dict.items():
@@ -511,6 +531,7 @@ if __name__=="__main__":
         print(f"run 2: sibs took: {run2} s, a difference of {run2-run1}")
         print(f"Time taken: {stop2-start1}, processed {processed}")
         print(f"Cache hits: run 1: {first_run_cache_hits} run 2:{g.cache["cache_hits"]}")
+        print(f"Filtered: {[w for w in set(g.words) if w not in g.cache.get("filtered_words")]}")
 
 
     weights = {
@@ -537,4 +558,3 @@ if __name__=="__main__":
     print(f"ids len: {len(g.token_dict.id_to_token)}")
     print(f"tokens len: {len(g.token_dict.token_to_id.keys())}")
     print(f"Cache: {g.cache.keys()} - {[{len(v) for v in g.cache.values()}]}")
-    print(f"Filtered: {[w for w in set(g.words) if w not in g.cache.get("filtered_words")]}")
