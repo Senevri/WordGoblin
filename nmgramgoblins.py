@@ -28,14 +28,15 @@ class NMGramGoblin(WordGoblin):
         self.m_len = m_len
         # self.words = []
         self.words = array("I") # AGAIN first benchmark.
-        self.max_token_len=max_token_len
+        self.max_token_len=int(max_token_len)
 
         self.token_dict = TokenDictionary()
         for token in SPECIAL_TOKENS.all():
             self.token_dict.add(token.encode("utf-8"))
         self.token_map = {} #key:bytearray
         self.cache={
-            "siblings":{}
+            "siblings":{},
+            "cache_hits": {}
         }
         #self.tokenize()
 
@@ -54,31 +55,44 @@ class NMGramGoblin(WordGoblin):
     def set_text(self, text_str):
         self.corpus = clean_mojibake(text_str)
 
+    def _cache_path(self, path) -> Path:
+        p = Path(path)
+        return p.with_name(p.name.removesuffix(".pickle") + ".cache.pickle")
+
+
     def save(self, path, cache=False):
         data = self.get_model_data()
-
         with Path(path).open("wb") as f:
             pickle.dump(data, f, protocol=pickle.HIGHEST_PROTOCOL)
 
         if cache:
-            with Path(str(path).removesuffix(".pickle")+".cache.pickle").open("wb") as f:
-                _cache = self.cache.copy()
-                _cache.pop("strings", {})
-                _cache.pop("id_tlen", {})
-                pickle.dump(_cache, f, protocol=pickle.HIGHEST_PROTOCOL)
+            _cache = self.cache.copy()
+            for key in ("strings", "id_tlen", "transition", "transition_key", "cache_hits"):
+                _cache.pop(key, None)
 
+            sibs = _cache.pop("siblings", {})
+            _cache["siblings"] = {
+                    (k[0], int(k[1])): v.tobytes()
+                    for k, v in sibs.items()
+                    }
+
+            with self._cache_path(path).open("wb") as f:
+                pickle.dump(_cache, f, protocol=pickle.HIGHEST_PROTOCOL)
 
 
     def load(self, path, cache=False):
         with Path(path).open("rb") as f:
-            data = pickle.load(f)
-        self.load_model_data(data)
+            self.load_model_data(pickle.load(f))
+
         if cache:
-            cachepath = str(path).removesuffix(".pickle")+".cache.pickle"
-            if Path(cachepath).exists():
-                with Path(cachepath).open("rb") as f:
-                    data = pickle.load(f)
-                    self.cache = data
+            cache_path = self._cache_path(path)
+            if cache_path.exists():
+                with cache_path.open("rb") as f:
+                    self.cache = pickle.load(f)
+                self.cache["siblings"] = {
+                    (k[0], SPECIAL_TOKENS.t_type((k[1]))): array("I", v) for k, v in self.cache.pop("siblings", {}).items()
+                }
+                self.cache.setdefault("cache_hits", {})
 
 
 
@@ -111,18 +125,18 @@ class NMGramGoblin(WordGoblin):
 
 
 
-    def _filtered_words(self):
+    def _filtered_words(self, filter=SPECIAL_TOKENS.indentation) -> list:
         if "filtered_words" not in self.cache:
             td = self.token_dict
-            ws = set(SPECIAL_TOKENS.indentation)
+            ws = set(filter)
             self.cache["filtered_words"] = [
                 w for w in self.words if self.to_str(w) not in ws
             ]
         return self.cache["filtered_words"]
 
 
-    def _build_transition_table(self, ignore_whitespace=True):
-        words = self._filtered_words() if ignore_whitespace else self.words
+    def _build_transition_table(self, filter=0):
+        words = self._filtered_words(SPECIAL_TOKENS.get_type(filter)) if filter > 0 else self.words
         successors = {}      # token_id -> set of tokens that follow it
         precedents = {}      # token_id -> set of tokens that precede it
         prev = None
@@ -133,28 +147,40 @@ class NMGramGoblin(WordGoblin):
             prev = w
         self.cache["transition"] = (successors, precedents)
 
-
-    def get_token_siblings(self, token_id, ignore_whitespace=True, get_bytes=False):
+    def get_token_siblings(self, token_id, filter=0, get_bytes=False):
         cache = self.cache.setdefault("siblings", {})
+        self.cache["cache_hits"].setdefault("siblings", 0)
+
         td = self.token_dict
 
-        cache_key = (token_id, ignore_whitespace)
+        cache_key = (token_id, filter)
         if cache_key in cache:
+            self.cache["cache_hits"]["siblings"] = self.cache["cache_hits"].get("siblings", 0) + 1
             sibs = cache[cache_key]
             return [td.get(cw) for cw in sibs] if get_bytes else sibs
 
-        key = ("filtered" if ignore_whitespace else "raw")
+        key = ("filtered" if filter else "raw")
 
-        if "transition" not in self.cache or self.cache.get("transition_key") != key:
-            self._build_transition_table(ignore_whitespace)
+        # if "transition" not in self.cache or self.cache.get("transition_key") != key:
+        #     self._build_transition_table(ignore_whitespace)
+        #     self.cache["transition_key"] = key
+        if self.cache.get("transition_key") != key:
+            self._build_transition_table(filter)
             self.cache["transition_key"] = key
 
         successors, precedents = self.cache["transition"]
-        sibs = set()
 
-        for p in precedents.get(token_id, ()):
-            sibs |= successors.get(p, ())
-        cache[cache_key] = sibs
+        # for p in precedents.get(token_id, ()):
+        #     sibs |= successors.get(p, ())
+        preds = precedents.get(token_id)
+        if preds:
+
+            sibs = set().union(*(successors.get(p, ()) for p in preds))
+            sibs.discard(token_id)
+        else:
+            sibs = ()
+
+        cache[cache_key] = array("I", sibs)
         return [self.token_dict.get(s) for s in sibs] if get_bytes else sibs
 
         # precedents = [
@@ -224,7 +250,7 @@ class NMGramGoblin(WordGoblin):
                 tgt = bytes(buf[i+1:i+4])           # bytes is hashable; bytearray is not
                 counts[tgt] = counts.get(tgt, 0) + 1
             new_buf = bytearray()
-            for tgt, w in counts.items():
+            for tgt, w in sorted(counts.items(), key=lambda item: item[1], reverse=True):
                 new_buf += b'\x00' + tgt + w.to_bytes(3, "little")
             self.token_map[t_id] = new_buf
 
@@ -274,42 +300,33 @@ class NMGramGoblin(WordGoblin):
         self.token_map = data["token_map"]
 
     def combine_with(self, other, multiplier=1.0):
-        """Merge other's transitions into self.
+        """Merge other's transitions and token stream into self."""
+        # 1. Build id mapping: other_id -> unified id in self.token_dict
+        id_map = {
+            other_id: self.token_dict.add(token_bytes)
+            for token_bytes, other_id in other.token_dict.items()
+        }
 
-        Record format: [dist:1][target:3][weight:3] = 7 bytes.
-        Renumber target ids through self's token_dict, scale weights,
-        sum weights for matching (dist, target) pairs.
-        """
-        # Build id mapping: other_id -> unified id in self.token_dict
-        other_data = other.get_model_data()
-        self.words += array("I", other_data["words"])
-        self.corpus += other_data["corpus"]
+        # 2. Remap other's flat word ID array before appending
+        self.words.extend(id_map[wid] for wid in other.words)
+        self.corpus += other.corpus
 
-        id_map = {}
-        for token_bytes, other_id in other.token_dict.items():
-            id_map[other_id] = self.token_dict.add(token_bytes)
-
+        # 3. Remap and merge token_map transitions (your existing logic is already right)
         for other_cur_id, other_buf in other.token_map.items():
             cur_id = id_map[other_cur_id]
             buf = self.token_map.setdefault(cur_id, bytearray())
 
-            # Index existing records in self's buf by (dist, target_bytes)
-            # for O(1) lookup during merge.
             existing = {}
             for i in range(0, len(buf), 7):
-                dist = buf[i]
-                target_b = bytes(buf[i+1:i+4])
-                weight = int.from_bytes(buf[i+4:i+7], "little")
-                existing[(dist, target_b)] = (i, weight)
+                key = (buf[i], bytes(buf[i+1:i+4]))
+                existing[key] = (i, int.from_bytes(buf[i+4:i+7], "little"))
 
-            # Process each record from other
             for i in range(0, len(other_buf), 7):
                 dist = other_buf[i]
                 target = int.from_bytes(other_buf[i+1:i+4], "little")
                 weight = int.from_bytes(other_buf[i+4:i+7], "little")
 
-                new_target = id_map[target]
-                new_target_b = int.to_bytes(new_target, 3, "little")
+                new_target_b = id_map[target].to_bytes(3, "little")
                 scaled_weight = round(weight * multiplier)
 
                 key = (dist, new_target_b)
@@ -348,17 +365,10 @@ class NMGramGoblin(WordGoblin):
 
     def to_str(self, token):
         cache = self.cache.setdefault("strings", {})
-        if isinstance(token, int):
-            cached = cache.get(token)
-            if cached is not None:
-                return cached
-            b = self.token_dict.get(token)
-            s = b.decode("utf-8")
-            cache[token] = s        # key by int
-            return s
         if token in cache:
             return cache[token]
-        s = token.decode("utf-8")
+        b = self.token_dict.get(token) if isinstance(token, int) else token
+        s = b.decode("utf-8")
         cache[token] = s
         return s
 
@@ -373,6 +383,7 @@ if __name__=="__main__":
     parser.add_argument("--siblings", action="store_true")
     parser.add_argument("--cache", action="store_true")
     parser.add_argument("--profile", action="store_true")
+    parser.add_argument("--tokenize", action="store_true")
 
     args = parser.parse_args()
 
@@ -404,6 +415,11 @@ if __name__=="__main__":
     stop = timer()
     print(f"Time init: {stop-start}")
 
+    if args.tokenize:
+        start = timer()
+        g.tokenize()
+        stop = timer()
+        print(f"Time tokenizing: {stop-start}")
 
 
     start = timer()
@@ -430,35 +446,95 @@ if __name__=="__main__":
     print(f"Largest weight: {max(weights)}")
 
     print(args.siblings)
+    s_stop = 0.0
+    s_start = 0.0
+    run1 = 0.0
+    run2 = 0.0
+    start1 = 0.0
+    stop1 = 0.0
+    stop2 = 0.0
+    p_stop = 0.0
+    processed=0
+    first_run_cache_hits = 0
+    td = g.token_dict
+
+    hub_words = [w for w in "The,the,a,A,An,".split(",") if td.find_by_str(w)]
+    print (hub_words)
+    exit()
+
     if args.siblings:
         start = timer()
         start1 = float(start)
-        processed=0
+
+        g._filtered_words(SPECIAL_TOKENS.all() + hub_words)
+
+
         try:
             for _, word in g.token_dict.items():
-                sibs = g.get_token_siblings(word, ignore_whitespace=True)
+                sibs = g.get_token_siblings(word, filter=SPECIAL_TOKENS.t_type.all)
                 processed += 1
-                print(f"|{g.to_str(word)}:{[g.to_str(s) for s in sibs if s][:10]}")
+                if processed % 100 == 0: print(f"{processed}", end="\r")
             stop=timer()
             run1 = stop-start
-            print(f"sibs took: {run1}")
-            g.save(base_path + ".2.bin.pickle", cache=True)
+            print(f"run1 sibs took: {run1}")
             start = timer()
-
+            processed=0
+            first_run_cache_hits = g.cache["cache_hits"]["siblings"]
             for _, word in g.token_dict.items():
-                sibs = g.get_token_siblings(word, ignore_whitespace=True)
-                print(f"|{g.to_str(word)}:{[g.to_str(s) for s in sibs if s][:10]}")
-            stop2=timer()
+                sibs = g.get_token_siblings(word, filter=SPECIAL_TOKENS.t_type.all)
+                processed += 1
+                if processed % 100 == 0: print(f"{processed}", end="\r")
+            stop2 = timer()
             run2 = stop2-start
-            print(f"sibs took: {run2}, a difference of {run1/run2}")
+            print(f"run2 sibs took: {run2}, a difference of {run1/run2}")
         except KeyboardInterrupt:
             print("User interrupt!")
             stop=timer()
-        print(f"Time taken: {stop2-start1}, processed {processed}")
+        print(f"Time taken: {stop2 - start1}, processed {processed}")
+        p_start = timer()
 
+
+        #print(weights.keys())
+        for word, sibs in g.cache.get("siblings", {}).items():
+            recs = g.token_map.get(word[0], b"")
+            w = {
+                entry[1]: entry[2]                                   # target_bytes → weight
+                for entry in g.decode_token_list(recs)
+            }
+            sibs = sorted(sibs, key=lambda x: w.get(td.get(x), -1), reverse=True)
+            print(f"|{g.to_str(word[0])}[{len(sibs)}]:"
+                f"{[g.to_str(s) for s in sibs[:14] if s]}")
+        print(f"Time gen: {stop-start}")
+        print(f"Saving took {s_stop-s_start} s")
+        print(f"Printing took {p_stop-p_start} s")
+        print(f"Run 1: sibs took: {run1} s")
+        print(f"run 2: sibs took: {run2} s, a difference of {run2-run1}")
+        print(f"Time taken: {stop2-start1}, processed {processed}")
+        print(f"Cache hits: run 1: {first_run_cache_hits} run 2:{g.cache["cache_hits"]}")
+
+
+    weights = {
+        entry[1]:entry[2]
+        for buf in g.token_map.values()
+        for entry in g.decode_token_list(buf)
+    }
+
+    if args.out:
+        s_start = timer()
+        g.save(base_path + ".2.bin.pickle", cache=True)
+        s_stop = timer()
+        print(f"Time saving: {stop-start}")
+
+
+    print(f"orig length: {len(g.corpus)}, token length: {len(g.words)}")
+
+    print(f"Num Tokens: {len(g.token_map)}")
+    print(f"Largest weight: {max(weights)}")
     print("Words:", sys.getsizeof(g.words))
     print("Token map:", sys.getsizeof(g.token_map))
     print("Token buffers:", sum(sys.getsizeof(v) for v in g.token_map.values()))
     print("Token dictionary:", sys.getsizeof(g.token_dict))
     print(f"ids len: {len(g.token_dict.id_to_token)}")
     print(f"tokens len: {len(g.token_dict.token_to_id.keys())}")
+    print(f"Cache: {g.cache.keys()} - {[{len(v) for v in g.cache.values()}]}")
+    print(f"Filtered: {[w for w in set(g.words) if w not in g.cache.get("filtered_words")]}")

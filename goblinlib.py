@@ -3,6 +3,7 @@ from __future__ import annotations
 import random
 from typing import List, Tuple, Optional, Dict, Any, Union
 from dataclasses import dataclass, field
+from enum import Enum, IntEnum
 
 Candidate = Tuple[str, int]
 Candidate3 = Tuple[str, int, int]
@@ -120,6 +121,10 @@ class TokenDictionary():
     def __contains__(self, token: bytes) -> bool:
         return token in self.token_to_id
 
+    def find_by_str(self, str) -> int | None:
+        return self.lookup(str.encode("utf-8"))
+
+
     def lookup(self, token: bytes) -> int | None:
         return self.token_to_id.get(token)
 
@@ -218,13 +223,29 @@ def binary_to_tokenpair(binary_t:bytes, _dict):
 import re
 
 class SPECIAL_TOKENS:
+    t_type = IntEnum("tokentype",
+        "none indent newline specialchars whitespace all"
+    )
     indentation = [" "*8, " "*4, " "*2, " ", "\t"]
     newline = ["\r\n", "\r", "\n"]
     specialchars = list('!"#¤%&/()\\?=)(/&%¤#"!\')^¨~§½<>|')
+    extra = []
     _all = []
     _single = None      # set of single-char specials
     _multi = None       # multi-char specials sorted longest-first
     _search = None      # compiled regex to find earliest single-char special
+
+    @staticmethod
+    def get_type(t_type):
+        print(t_type)
+        return [
+            [],
+            SPECIAL_TOKENS.indentation,
+            SPECIAL_TOKENS.newline,
+            SPECIAL_TOKENS.specialchars,
+            SPECIAL_TOKENS.indentation + SPECIAL_TOKENS.newline,
+            SPECIAL_TOKENS.all()
+        ][t_type-1]
 
     @staticmethod
     def all():
@@ -232,6 +253,7 @@ class SPECIAL_TOKENS:
         if _st._all: return _st._all
         _st._all = _st.indentation + _st.newline + _st.specialchars
         return _st._all
+
 
     @classmethod
     def _build(cls):
@@ -249,7 +271,6 @@ class SPECIAL_TOKENS:
         cls._search = re.compile('[' + chars + ']')
 
     @classmethod
-
     def check_string(cls, in_str: str):
         if cls._single is None:
             cls._build()
